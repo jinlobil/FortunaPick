@@ -12,13 +12,12 @@ from PyQt5.QtWidgets import (
     QStackedWidget, QSizePolicy, QLineEdit, QMessageBox,
     QGraphicsDropShadowEffect, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QPen, QBrush, QFont
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPixmap, QColor
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-import numpy as np
+from matplotlib.patches import Rectangle
 
 
 # ============================================================
@@ -369,7 +368,7 @@ class DonutChart(QWidget):
         y_positions = [0.86, 0.68, 0.50, 0.32, 0.14]
         for i, (lbl, w) in enumerate(zip(labels, wedges)):
             y = y_positions[i] if i < len(y_positions) else max(0.10, 0.86 - i * 0.16)
-            rect = plt.Rectangle(
+            rect = Rectangle(
                 (0.0, y - 0.04), 0.18, 0.08,
                 color=w.get_facecolor(),
                 transform=lax.transAxes,
@@ -648,6 +647,124 @@ class LottoApp(QMainWindow):
         nums.sort()
         return nums
 
+    def _weighted_pick_unique(self, candidates, weights, k):
+        pool = list(candidates)
+        ws = [max(0.0001, float(w)) for w in weights]
+        out = []
+        for _ in range(min(k, len(pool))):
+            chosen = random.choices(pool, weights=ws, k=1)[0]
+            idx = pool.index(chosen)
+            out.append(chosen)
+            pool.pop(idx)
+            ws.pop(idx)
+        return out
+
+    def _algo_frequency_weighted(self, fixed=1):
+        freq = self.number_frequency()
+        candidates = [n for n in range(1, 46) if n != fixed]
+        weights = [(freq.get(n, 0) + 1) ** 1.25 for n in candidates]
+        picks = self._weighted_pick_unique(candidates, weights, 5)
+        return sorted([fixed] + picks)
+
+    def _algo_recency_gap_weighted(self, fixed=1, recent_window=120):
+        recent = self.get_recent_draws(recent_window)
+        recent_counter = Counter()
+        last_seen = {n: None for n in range(1, 46)}
+        for idx, draw in enumerate(recent):
+            for n in draw.get("numbers", []):
+                recent_counter[n] += 1
+                if last_seen[n] is None:
+                    last_seen[n] = idx
+        candidates = [n for n in range(1, 46) if n != fixed]
+        weights = []
+        for n in candidates:
+            hot = recent_counter.get(n, 0) + 1
+            gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
+            weights.append((hot ** 1.15) * (gap ** 0.35))
+        picks = self._weighted_pick_unique(candidates, weights, 5)
+        return sorted([fixed] + picks)
+
+    def _algo_pair_correlation(self, fixed=1):
+        co = Counter()
+        for draw in self.data.values():
+            nums = sorted(draw.get("numbers") or [])
+            if len(nums) != 6:
+                continue
+            for i in range(len(nums)):
+                for j in range(i + 1, len(nums)):
+                    co[(nums[i], nums[j])] += 1
+        selected = [fixed]
+        candidates = set(range(1, 46)) - {fixed}
+        while len(selected) < 6 and candidates:
+            best_n = None
+            best_score = -1
+            for n in candidates:
+                s = 0
+                for p in selected:
+                    a, b = sorted((n, p))
+                    s += co.get((a, b), 0)
+                if s > best_score:
+                    best_score = s
+                    best_n = n
+            selected.append(best_n if best_n is not None else random.choice(list(candidates)))
+            candidates.discard(selected[-1])
+        return sorted(selected)
+
+    def _algo_constraint_balanced(self, fixed=1, tries=5000):
+        # Balanced rejection sampler with fixed number
+        target_odd = {2, 3, 4}
+        for _ in range(tries):
+            picks = random.sample([n for n in range(1, 46) if n != fixed], 5)
+            nums = sorted([fixed] + picks)
+            odd_cnt = sum(1 for n in nums if n % 2 == 1)
+            total = sum(nums)
+            consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
+            decade_bins = [0, 0, 0, 0, 0]
+            for n in nums:
+                if 1 <= n <= 10: decade_bins[0] += 1
+                elif 11 <= n <= 20: decade_bins[1] += 1
+                elif 21 <= n <= 30: decade_bins[2] += 1
+                elif 31 <= n <= 40: decade_bins[3] += 1
+                else: decade_bins[4] += 1
+            if odd_cnt not in target_odd:
+                continue
+            if not (95 <= total <= 185):
+                continue
+            if consec_pairs > 1:
+                continue
+            if max(decade_bins) > 3:
+                continue
+            return nums
+        return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
+
+    def generate_numbers_by_mode(self, mode: str, fixed=1):
+        if mode == "random":
+            return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
+        if mode == "freq":
+            return self._algo_frequency_weighted(fixed=fixed)
+        if mode == "recent":
+            return self._algo_recency_gap_weighted(fixed=fixed)
+        if mode == "pair":
+            return self._algo_pair_correlation(fixed=fixed)
+        if mode == "balanced":
+            return self._algo_constraint_balanced(fixed=fixed)
+        return self.generate_numbers()
+
+    def generate_number_lines(self, mode: str, fixed=1, line_count=5):
+        lines = []
+        seen = set()
+        guard = 0
+        while len(lines) < line_count and guard < line_count * 30:
+            guard += 1
+            nums = tuple(self.generate_numbers_by_mode(mode, fixed=fixed))
+            if nums in seen:
+                continue
+            seen.add(nums)
+            lines.append(list(nums))
+        while len(lines) < line_count:
+            lines.append(self.generate_numbers_by_mode(mode, fixed=fixed))
+        return lines
+
     # -----------------------------
     # UI
     # -----------------------------
@@ -660,7 +777,7 @@ class LottoApp(QMainWindow):
         # Sidebar
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(160)
+        sidebar.setFixedWidth(230)
         side_lay = QVBoxLayout(sidebar)
         side_lay.setContentsMargins(18, 18, 18, 18)
         side_lay.setSpacing(14)
@@ -683,7 +800,7 @@ class LottoApp(QMainWindow):
         logo_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         brand_lbl = QLabel("FortunaPick")
-        brand_lbl.setStyleSheet("font-size:30px; font-weight:900; letter-spacing:0px; color:white;")
+        brand_lbl.setStyleSheet("font-size:28px; font-weight:900; letter-spacing:0px; color:white;")
         brand_lbl.setWordWrap(False)
         brand_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
@@ -692,9 +809,9 @@ class LottoApp(QMainWindow):
         side_lay.addWidget(brand_wrap)
         side_lay.addSpacing(12)
 
-        self.btn_dash = QPushButton("Dashboard")
-        self.btn_gen = QPushButton("Generator")
-        self.btn_cfg = QPushButton("Config")
+        self.btn_dash = QPushButton("대시보드")
+        self.btn_gen = QPushButton("번호 생성")
+        self.btn_cfg = QPushButton("설정")
 
         for b in (self.btn_dash, self.btn_gen, self.btn_cfg):
             b.setObjectName("NavBtn")
@@ -758,9 +875,10 @@ class LottoApp(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        # ── ROW 1: Number Trends + Range Distribution ──
-        top_wrap = QHBoxLayout()
-        top_wrap.setSpacing(16)
+        # ── ROW 1~2: Number Trends + Range Distribution + Latest cards ──
+        hero_grid = QGridLayout()
+        hero_grid.setHorizontalSpacing(16)
+        hero_grid.setVerticalSpacing(16)
 
         trend_card, trend_layout = make_card(min_h=190)
         title = QLabel("Number Trends")
@@ -790,26 +908,25 @@ class LottoApp(QMainWindow):
         trend_layout.addLayout(self.trend_balls_row)
         trend_layout.addStretch(1)
 
-        right_card, right_lay = make_card(min_h=210)
+        right_card, right_lay = make_card(min_h=330)
         chart_title = QLabel("Range Distribution")
         chart_title.setObjectName("CardTitle")
         right_lay.addWidget(chart_title)
         self.donut = DonutChart()
-        self.donut.setMinimumSize(200, 150)
+        self.donut.setMinimumSize(320, 280)
         labels, values = self.decade_distribution()
         self.donut.set_data(labels, values, title="Total Picks")
         right_lay.addWidget(self.donut, 1)
 
-        top_wrap.addWidget(trend_card, 5)
-        top_wrap.addWidget(right_card, 4)
-        layout.addLayout(top_wrap)
+        hero_grid.addWidget(trend_card, 0, 0)
+        hero_grid.addWidget(right_card, 0, 1, 2, 1)
 
-        # ── ROW 2: Latest Round + Latest Numbers + Top Numbers ──
+        # ── ROW 2: Latest Round + Latest Numbers ──
         mid_wrap = QHBoxLayout()
         mid_wrap.setSpacing(16)
 
         c1, l1 = make_card(min_h=130)
-        t1 = QLabel("Latest Round")
+        t1 = QLabel("최신 회차")
         t1.setObjectName("CardTitle")
         l1.addWidget(t1)
         self.latest_round_value = QLabel(str(self.get_latest_round()))
@@ -818,7 +935,7 @@ class LottoApp(QMainWindow):
         l1.addWidget(self.latest_round_value, alignment=Qt.AlignLeft | Qt.AlignBottom)
 
         c_mid, l_mid = make_card(min_h=130)
-        t_mid = QLabel("Latest Winning Numbers")
+        t_mid = QLabel("최신 당첨 번호")
         t_mid.setObjectName("CardTitle")
         l_mid.addWidget(t_mid)
         self.latest_win_row = QHBoxLayout()
@@ -835,51 +952,14 @@ class LottoApp(QMainWindow):
             self.latest_win_row.addWidget(make_bonus_ball(latest_draw.get("bonus", 0), size=42))
         l_mid.addStretch(1)
 
-        c2, l2 = make_card(min_h=130)
-        t2 = QLabel("Top Numbers")
-        t2.setObjectName("CardTitle")
-        l2.addWidget(t2)
-        self.top_numbers_layout = QVBoxLayout()
-        self.top_numbers_layout.setSpacing(5)
-        l2.addLayout(self.top_numbers_layout)
-        freq = self.number_frequency()
-        if not freq:
-            empty = QLabel("No cache data")
-            empty.setObjectName("Muted")
-            self.top_numbers_layout.addWidget(empty)
-        else:
-            top1_cnt = freq.most_common(1)[0][1]
-            for num, cnt in freq.most_common(5):
-                row_w = QHBoxLayout()
-                row_w.setSpacing(6)
-                num_lbl = QLabel(str(num))
-                num_lbl.setFixedWidth(24)
-                num_lbl.setStyleSheet("font-size:13px; font-weight:800; color:#2ec996;")
-                bar_pct = cnt / top1_cnt if top1_cnt else 0
-                bar_bg = QFrame()
-                bar_bg.setFixedHeight(6)
-                bar_bg.setStyleSheet("background:rgba(255,255,255,0.10); border-radius:3px;")
-                bar_bg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                bar_fg = QFrame(bar_bg)
-                bar_fg.setFixedHeight(6)
-                bar_fg.setStyleSheet("background:#2ec996; border-radius:3px;")
-                bar_fg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                # width will be set proportionally via stylesheet
-                bar_fg.setFixedWidth(max(4, int(bar_pct * 80)))
-                cnt_lbl = QLabel(f"{cnt}회")
-                cnt_lbl.setFixedWidth(42)
-                cnt_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                cnt_lbl.setStyleSheet("font-size:11px; font-weight:600; color:rgba(255,255,255,0.65);")
-                row_w.addWidget(num_lbl)
-                row_w.addWidget(bar_bg)
-                row_w.addWidget(cnt_lbl)
-                self.top_numbers_layout.addLayout(row_w)
-        l2.addStretch(1)
-
         mid_wrap.addWidget(c1, 1)
         mid_wrap.addWidget(c_mid, 2)
-        mid_wrap.addWidget(c2, 1)
-        layout.addLayout(mid_wrap)
+        mid_holder = QWidget()
+        mid_holder.setLayout(mid_wrap)
+        hero_grid.addWidget(mid_holder, 1, 0)
+        hero_grid.setColumnStretch(0, 5)
+        hero_grid.setColumnStretch(1, 4)
+        layout.addLayout(hero_grid)
 
         # ── ROW 3: Frequency Bar Chart (full width) ──
         freq_card, freq_lay = make_card(min_h=200)
@@ -926,21 +1006,21 @@ class LottoApp(QMainWindow):
 
         self.oe_odd_lbl = QLabel(f"{odd:,}")
         self.oe_odd_lbl.setObjectName("StatValue")
-        oe_odd_sub = QLabel(f"홀수 ({odd_pct:.1f}%)")
-        oe_odd_sub.setObjectName("StatLabel")
+        self.oe_odd_sub = QLabel(f"홀수 ({odd_pct:.1f}%)")
+        self.oe_odd_sub.setObjectName("StatLabel")
 
         self.oe_even_lbl = QLabel(f"{even:,}")
         self.oe_even_lbl.setObjectName("StatValue")
         self.oe_even_lbl.setStyleSheet("font-size:20px; font-weight:800; color:#e6a817;")
-        oe_even_sub = QLabel(f"짝수 ({even_pct:.1f}%)")
-        oe_even_sub.setObjectName("StatLabel")
+        self.oe_even_sub = QLabel(f"짝수 ({even_pct:.1f}%)")
+        self.oe_even_sub.setObjectName("StatLabel")
 
         self.oe_common_lbl = QLabel(f"홀{most_common_oe[0]}개" if dist else "-")
         self.oe_common_lbl.setObjectName("StatValue")
         oe_common_sub = QLabel("가장 흔한 홀수 조합")
         oe_common_sub.setObjectName("StatLabel")
 
-        for w in [self.oe_odd_lbl, oe_odd_sub, self.oe_even_lbl, oe_even_sub, self.oe_common_lbl, oe_common_sub]:
+        for w in [self.oe_odd_lbl, self.oe_odd_sub, self.oe_even_lbl, self.oe_even_sub, self.oe_common_lbl, oe_common_sub]:
             oe_stats.addWidget(w)
         oe_stats.addStretch(1)
 
@@ -992,66 +1072,97 @@ class LottoApp(QMainWindow):
         ratio_lay.setContentsMargins(0, 4, 0, 0)
         ratio_lay.setSpacing(0)
 
-        bar_consec = QFrame()
-        bar_consec.setFixedHeight(6)
-        bar_consec.setStyleSheet("background:#2ec996; border-radius:3px;")
-        bar_consec.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.bar_consec = QFrame()
+        self.bar_consec.setFixedHeight(6)
+        self.bar_consec.setStyleSheet("background:#2ec996; border-radius:3px;")
+        self.bar_consec.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         if total_draws > 0:
-            bar_consec.setFixedWidth(max(1, int(consec_pct * 2)))
+            self.bar_consec.setFixedWidth(max(1, int(consec_pct * 2)))
 
         bar_no = QFrame()
         bar_no.setFixedHeight(6)
         bar_no.setStyleSheet("background:rgba(255,255,255,0.12); border-radius:3px;")
         bar_no.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        ratio_lay.addWidget(bar_consec)
+        ratio_lay.addWidget(self.bar_consec)
         ratio_lay.addWidget(bar_no)
 
-        lbl_ratio = QLabel(f"연속포함 {consec_pct:.1f}% / 미포함 {no_consec_pct:.1f}%")
-        lbl_ratio.setObjectName("Muted")
-        lbl_ratio.setAlignment(Qt.AlignCenter)
+        self.lbl_ratio = QLabel(f"연속포함 {consec_pct:.1f}% / 미포함 {no_consec_pct:.1f}%")
+        self.lbl_ratio.setObjectName("Muted")
+        self.lbl_ratio.setAlignment(Qt.AlignCenter)
         cp_lay.addWidget(ratio_wrap)
-        cp_lay.addWidget(lbl_ratio)
+        cp_lay.addWidget(self.lbl_ratio)
 
         stat_row.addWidget(oe_card, 1)
         stat_row.addWidget(cp_card, 1)
         layout.addLayout(stat_row)
 
-        # ── ROW 5: Recent N Draws History ──
-        hist_card, hist_lay = make_card(min_h=180)
+        # ── ROW 5: Recent History + Top Numbers (50:50) ──
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+
+        hist_card, hist_lay = make_card(min_h=320)
+        title_row = QHBoxLayout()
         hist_title = QLabel("최근 당첨번호 히스토리")
         hist_title.setObjectName("CardTitle")
-        hist_lay.addWidget(hist_title)
         sub_hist = QLabel("최근 8회차")
         sub_hist.setObjectName("Muted")
-        hist_lay.addWidget(sub_hist)
+        sub_hist.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.58);")
+        title_row.addWidget(hist_title)
+        title_row.addWidget(sub_hist)
+        title_row.addStretch(1)
+        hist_lay.addLayout(title_row)
 
-        self.history_vbox = QVBoxLayout()
-        self.history_vbox.setSpacing(4)
-        hist_lay.addLayout(self.history_vbox)
+        self.history_grid = QGridLayout()
+        self.history_grid.setHorizontalSpacing(4)
+        self.history_grid.setVerticalSpacing(6)
+        hist_lay.addLayout(self.history_grid)
         self._populate_history()
 
-        layout.addWidget(hist_card)
+        top_card, top_lay = make_card(min_h=320)
+        top_title = QLabel("상위 출현 번호")
+        top_title.setObjectName("CardTitle")
+        top_title.setStyleSheet("font-size:19px; font-weight:900; color:white;")
+        top_lay.addWidget(top_title)
+        self.top_numbers_layout = QVBoxLayout()
+        self.top_numbers_layout.setSpacing(5)
+        top_lay.addLayout(self.top_numbers_layout)
+        freq = self.number_frequency()
+        if not freq:
+            empty = QLabel("No cache data")
+            empty.setObjectName("Muted")
+            self.top_numbers_layout.addWidget(empty)
+        else:
+            top1_cnt = freq.most_common(1)[0][1]
+            for num, cnt in freq.most_common(8):
+                row_w = QHBoxLayout()
+                row_w.setSpacing(10)
+                num_lbl = QLabel(str(num))
+                num_lbl.setFixedWidth(30)
+                num_lbl.setStyleSheet("font-size:16px; font-weight:900; color:#2ec996;")
+                bar_pct = cnt / top1_cnt if top1_cnt else 0
+                bar_bg = QFrame()
+                bar_bg.setFixedHeight(10)
+                bar_bg.setStyleSheet("background:rgba(255,255,255,0.10); border-radius:3px;")
+                bar_bg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                bar_fg = QFrame(bar_bg)
+                bar_fg.setFixedHeight(10)
+                bar_fg.setStyleSheet("background:#2ec996; border-radius:3px;")
+                bar_fg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                bar_fg.setFixedWidth(max(12, int(bar_pct * 220)))
+                cnt_lbl = QLabel(f"{cnt}회")
+                cnt_lbl.setFixedWidth(52)
+                cnt_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                cnt_lbl.setStyleSheet("font-size:13px; font-weight:700; color:rgba(255,255,255,0.80);")
+                row_w.addWidget(num_lbl)
+                row_w.addWidget(bar_bg)
+                row_w.addWidget(cnt_lbl)
+                self.top_numbers_layout.addLayout(row_w)
+        top_lay.addStretch(1)
 
-        # ── ROW 6: Quick Pick ──
-        c3, l3 = make_card(min_h=140)
-        t3 = QLabel("Quick Pick")
-        t3.setObjectName("CardTitle")
-        l3.addWidget(t3)
-        self.quick_hint = QLabel("Press Generate to roll lucky numbers")
-        self.quick_hint.setObjectName("Muted")
-        l3.addWidget(self.quick_hint)
-        self.quick_ball_row = QHBoxLayout()
-        self.quick_ball_row.setSpacing(10)
-        self.quick_ball_row.setAlignment(Qt.AlignLeft)
-        l3.addLayout(self.quick_ball_row)
-        btn = QPushButton("Generate")
-        btn.setObjectName("PrimaryBtn")
-        btn.setFixedHeight(40)
-        btn.clicked.connect(self.on_quick_generate)
-        l3.addStretch(1)
-        l3.addWidget(btn)
-        layout.addWidget(c3)
+        bottom_row.addWidget(hist_card, 1)
+        bottom_row.addWidget(top_card, 1)
+        layout.addLayout(bottom_row)
 
         layout.addStretch(1)
 
@@ -1061,8 +1172,8 @@ class LottoApp(QMainWindow):
 
     def _populate_history(self):
         # Clear existing widgets
-        while self.history_vbox.count():
-            item = self.history_vbox.takeAt(0)
+        while self.history_grid.count():
+            item = self.history_grid.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -1071,17 +1182,17 @@ class LottoApp(QMainWindow):
         if not recent:
             lbl = QLabel("데이터 없음")
             lbl.setObjectName("Muted")
-            self.history_vbox.addWidget(lbl)
+            self.history_grid.addWidget(lbl, 0, 0, 1, 2)
             return
 
-        for draw in recent:
+        for idx, draw in enumerate(recent):
             row_w = QWidget()
             row_lay = QHBoxLayout(row_w)
             row_lay.setContentsMargins(0, 2, 0, 2)
-            row_lay.setSpacing(10)
+            row_lay.setSpacing(3)
 
             round_lbl = QLabel(f"#{draw['round']}")
-            round_lbl.setFixedWidth(50)
+            round_lbl.setFixedWidth(40)
             round_lbl.setStyleSheet("font-size:12px; font-weight:700; color:rgba(255,255,255,0.55);")
             round_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             row_lay.addWidget(round_lbl)
@@ -1090,21 +1201,23 @@ class LottoApp(QMainWindow):
             if len(date_str) == 8:
                 date_str = f"{date_str[:4]}.{date_str[4:6]}.{date_str[6:]}"
             date_lbl = QLabel(date_str)
-            date_lbl.setFixedWidth(82)
+            date_lbl.setFixedWidth(68)
             date_lbl.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.38);")
             date_lbl.setAlignment(Qt.AlignCenter)
             row_lay.addWidget(date_lbl)
 
             for n in draw.get("numbers", []):
-                row_lay.addWidget(make_ball(n, size=28))
+                row_lay.addWidget(make_ball(n, size=32))
 
             plus = QLabel("+")
+            plus.setFixedWidth(8)
+            plus.setAlignment(Qt.AlignCenter)
             plus.setStyleSheet("font-size:11px; font-weight:800; color:rgba(255,255,255,0.45);")
             row_lay.addWidget(plus)
-            row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=28))
-            row_lay.addStretch(1)
-
-            self.history_vbox.addWidget(row_w)
+            row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=32))
+            row = idx // 2
+            col = idx % 2
+            self.history_grid.addWidget(row_w, row, col)
 
     # -----------------------------
     # Data
@@ -1177,25 +1290,25 @@ class LottoApp(QMainWindow):
                 self.top_numbers_layout.addWidget(empty)
             else:
                 top1_cnt = freq.most_common(1)[0][1]
-                for num, cnt in freq.most_common(5):
+                for num, cnt in freq.most_common(8):
                     row_w = QHBoxLayout()
-                    row_w.setSpacing(6)
+                    row_w.setSpacing(10)
                     num_lbl = QLabel(str(num))
-                    num_lbl.setFixedWidth(24)
-                    num_lbl.setStyleSheet("font-size:13px; font-weight:800; color:#2ec996;")
+                    num_lbl.setFixedWidth(30)
+                    num_lbl.setStyleSheet("font-size:16px; font-weight:900; color:#2ec996;")
                     bar_pct = cnt / top1_cnt if top1_cnt else 0
                     bar_bg = QFrame()
-                    bar_bg.setFixedHeight(6)
+                    bar_bg.setFixedHeight(10)
                     bar_bg.setStyleSheet("background:rgba(255,255,255,0.10); border-radius:3px;")
                     bar_bg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                     bar_fg = QFrame(bar_bg)
-                    bar_fg.setFixedHeight(6)
+                    bar_fg.setFixedHeight(10)
                     bar_fg.setStyleSheet("background:#2ec996; border-radius:3px;")
-                    bar_fg.setFixedWidth(max(4, int(bar_pct * 80)))
+                    bar_fg.setFixedWidth(max(12, int(bar_pct * 220)))
                     cnt_lbl = QLabel(f"{cnt}회")
-                    cnt_lbl.setFixedWidth(42)
+                    cnt_lbl.setFixedWidth(52)
                     cnt_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    cnt_lbl.setStyleSheet("font-size:11px; font-weight:600; color:rgba(255,255,255,0.65);")
+                    cnt_lbl.setStyleSheet("font-size:13px; font-weight:700; color:rgba(255,255,255,0.80);")
                     row_w.addWidget(num_lbl)
                     row_w.addWidget(bar_bg)
                     row_w.addWidget(cnt_lbl)
@@ -1232,6 +1345,8 @@ class LottoApp(QMainWindow):
             even_pct = even / total_balls * 100 if total_balls > 0 else 0
             self.oe_odd_lbl.setText(f"{odd:,}")
             self.oe_even_lbl.setText(f"{even:,}")
+            self.oe_odd_sub.setText(f"홀수 ({odd_pct:.1f}%)")
+            self.oe_even_sub.setText(f"짝수 ({even_pct:.1f}%)")
             dist = self.odd_even_per_draw_distribution()
             most_common_oe = dist.most_common(1)[0] if dist else (0, 0)
             self.oe_common_lbl.setText(f"홀{most_common_oe[0]}개" if dist else "-")
@@ -1239,6 +1354,15 @@ class LottoApp(QMainWindow):
         if hasattr(self, "cp_total_lbl"):
             total_draws, with_consec, max_streak = self.consecutive_pattern_stats()
             consec_pct = with_consec / total_draws * 100 if total_draws > 0 else 0
+            no_consec_pct = 100 - consec_pct
+            self.cp_total_lbl.findChildren(QLabel)[0].setText(str(total_draws))
+            self.cp_consec_lbl.findChildren(QLabel)[0].setText(str(with_consec))
+            self.cp_pct_lbl.findChildren(QLabel)[0].setText(f"{consec_pct:.1f}%")
+            self.cp_max_lbl.findChildren(QLabel)[0].setText(str(max_streak))
+            if hasattr(self, "lbl_ratio"):
+                self.lbl_ratio.setText(f"연속포함 {consec_pct:.1f}% / 미포함 {no_consec_pct:.1f}%")
+            if hasattr(self, "bar_consec"):
+                self.bar_consec.setFixedWidth(max(1, int(consec_pct * 2)) if total_draws > 0 else 1)
 
         if hasattr(self, "latest_win_row"):
             self.clear_layout(self.latest_win_row)
@@ -1251,18 +1375,8 @@ class LottoApp(QMainWindow):
                 self.latest_win_row.addWidget(bonus_lbl)
                 self.latest_win_row.addWidget(make_bonus_ball(latest_draw.get("bonus", 0), size=42))
 
-        if hasattr(self, "history_vbox"):
+        if hasattr(self, "history_grid"):
             self._populate_history()
-
-    # -----------------------------
-    # Quick Pick
-    # -----------------------------
-    def on_quick_generate(self):
-        self.quick_roll_step = 0
-        if not hasattr(self, "quick_roll_timer"):
-            self.quick_roll_timer = QTimer(self)
-            self.quick_roll_timer.timeout.connect(self._roll_quick_numbers)
-        self.quick_roll_timer.start(70)
 
     def _clear_layout_widgets(self, layout):
         while layout.count():
@@ -1271,34 +1385,12 @@ class LottoApp(QMainWindow):
             if widget:
                 widget.deleteLater()
 
-    def _roll_quick_numbers(self):
-        self.quick_roll_step += 1
-        nums = self.generate_numbers()
-        self._clear_layout_widgets(self.quick_ball_row)
+    def _set_mode_card_numbers(self, mode_key: str, ball_row: QHBoxLayout, text_label: QLabel):
+        nums = self.generate_numbers_by_mode(mode_key, fixed=1)
+        self._clear_layout_widgets(ball_row)
         for n in nums:
-            self.quick_ball_row.addWidget(make_ball(n, size=44))
-        if self.quick_roll_step >= 12:
-            self.quick_roll_timer.stop()
-            final_nums = self.generate_numbers()
-            self._clear_layout_widgets(self.quick_ball_row)
-            for n in final_nums:
-                self.quick_ball_row.addWidget(make_ball(n, size=48))
-            self.quick_hint.setText("추천 번호가 생성되었습니다.")
-
-    def _roll_generator_numbers(self):
-        self.gen_roll_step += 1
-        nums = self.generate_numbers()
-        self._clear_layout_widgets(self.gen_row)
-        for n in nums:
-            self.gen_row.addWidget(make_ball(n, size=50))
-        if self.gen_roll_step >= 12:
-            self.gen_roll_timer.stop()
-            final_nums = self.generate_numbers()
-            self._clear_layout_widgets(self.gen_row)
-            for n in final_nums:
-                self.gen_row.addWidget(make_ball(n, size=56))
-            self.gen_hint.setText("생성 완료")
-            self.gen_last_label.setText("  ".join(map(str, final_nums)))
+            ball_row.addWidget(make_ball(n, size=52))
+        text_label.setText("  ".join(map(str, nums)))
 
     # -----------------------------
     # Generator Page
@@ -1309,61 +1401,48 @@ class LottoApp(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        header = QLabel("Generator")
+        header = QLabel("번호 생성")
         header.setObjectName("SectionTitle")
         layout.addWidget(header)
 
-        card, cl = make_card(min_h=320)
-        title = QLabel("Lucky Number Machine")
-        title.setObjectName("CardTitle")
-        cl.addWidget(title)
+        mode_specs = [
+            ("random", "1) 랜덤 알고리즘 (1번 고정)"),
+            ("freq", "2) 빈도 가중 알고리즘 (1번 고정)"),
+            ("recent", "3) 최근성+간격 알고리즘 (1번 고정)"),
+            ("pair", "4) 공출현 상관 알고리즘 (1번 고정)"),
+            ("balanced", "5) 제약 균형 알고리즘 (1번 고정)"),
+        ]
 
-        self.gen_hint = QLabel("버튼을 누르면 추천 번호가 애니메이션으로 생성됩니다.")
-        self.gen_hint.setObjectName("Muted")
-        cl.addWidget(self.gen_hint)
+        for mode_key, mode_title in mode_specs:
+            card, cl = make_card(min_h=150)
+            title = QLabel(mode_title)
+            title.setObjectName("CardTitle")
+            cl.addWidget(title)
+            hint = QLabel("생성 버튼을 누르면 해당 알고리즘으로 1세트를 생성합니다.")
+            hint.setObjectName("Muted")
+            cl.addWidget(hint)
 
-        self.gen_row = QHBoxLayout()
-        self.gen_row.setSpacing(10)
-        self.gen_row.setAlignment(Qt.AlignLeft)
-        cl.addLayout(self.gen_row)
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.setAlignment(Qt.AlignLeft)
+            cl.addLayout(row)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+            result_lbl = QLabel("-")
+            result_lbl.setObjectName("Muted")
+            cl.addWidget(result_lbl)
 
-        gen_btn = QPushButton("Generate Numbers")
-        gen_btn.setObjectName("PrimaryBtn")
-        gen_btn.setFixedHeight(42)
-        gen_btn.clicked.connect(self.on_generate_page)
-        btn_row.addWidget(gen_btn)
+            btn = QPushButton("번호 생성")
+            btn.setObjectName("PrimaryBtn")
+            btn.setFixedHeight(38)
+            btn.clicked.connect(lambda _, m=mode_key, r=row, l=result_lbl: self._set_mode_card_numbers(m, r, l))
+            cl.addWidget(btn, alignment=Qt.AlignLeft)
+            layout.addWidget(card)
 
-        clear_btn = QPushButton("Clear")
-        clear_btn.setObjectName("PrimaryBtn")
-        clear_btn.setFixedHeight(42)
-        clear_btn.clicked.connect(lambda: self._clear_layout_widgets(self.gen_row))
-        btn_row.addWidget(clear_btn)
-
-        cl.addStretch(1)
-        cl.addLayout(btn_row)
-
-        history_card, history_lay = make_card(min_h=120)
-        history_title = QLabel("Last Generated Set")
-        history_title.setObjectName("CardTitle")
-        history_lay.addWidget(history_title)
-        self.gen_last_label = QLabel("-")
-        self.gen_last_label.setObjectName("Muted")
-        history_lay.addWidget(self.gen_last_label)
-
-        layout.addWidget(card)
-        layout.addWidget(history_card)
         layout.addStretch(1)
         return page
 
     def on_generate_page(self):
-        self.gen_roll_step = 0
-        if not hasattr(self, "gen_roll_timer"):
-            self.gen_roll_timer = QTimer(self)
-            self.gen_roll_timer.timeout.connect(self._roll_generator_numbers)
-        self.gen_roll_timer.start(70)
+        pass
 
     # -----------------------------
     # Config Page
@@ -1374,7 +1453,7 @@ class LottoApp(QMainWindow):
         layout.setContentsMargins(60, 40, 60, 40)
         layout.setSpacing(22)
 
-        header = QLabel("Config")
+        header = QLabel("설정")
         header.setObjectName("SectionTitle")
         layout.addWidget(header)
 
