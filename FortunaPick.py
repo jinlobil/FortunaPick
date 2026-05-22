@@ -1026,7 +1026,7 @@ class LottoApp(QMainWindow):
         hist_lay.addWidget(sub_hist)
 
         self.history_grid = QGridLayout()
-        self.history_grid.setHorizontalSpacing(14)
+        self.history_grid.setHorizontalSpacing(4)
         self.history_grid.setVerticalSpacing(6)
         hist_lay.addLayout(self.history_grid)
         self._populate_history()
@@ -1082,8 +1082,6 @@ class LottoApp(QMainWindow):
             plus.setStyleSheet("font-size:11px; font-weight:800; color:rgba(255,255,255,0.45);")
             row_lay.addWidget(plus)
             row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=28))
-            row_lay.addStretch(1)
-
             row = idx // 2
             col = idx % 2
             self.history_grid.addWidget(row_w, row, col)
