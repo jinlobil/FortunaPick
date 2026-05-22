@@ -647,6 +647,107 @@ class LottoApp(QMainWindow):
         nums.sort()
         return nums
 
+    def _weighted_pick_unique(self, candidates, weights, k):
+        pool = list(candidates)
+        ws = [max(0.0001, float(w)) for w in weights]
+        out = []
+        for _ in range(min(k, len(pool))):
+            chosen = random.choices(pool, weights=ws, k=1)[0]
+            idx = pool.index(chosen)
+            out.append(chosen)
+            pool.pop(idx)
+            ws.pop(idx)
+        return out
+
+    def _algo_frequency_weighted(self, fixed=1):
+        freq = self.number_frequency()
+        candidates = [n for n in range(1, 46) if n != fixed]
+        weights = [(freq.get(n, 0) + 1) ** 1.25 for n in candidates]
+        picks = self._weighted_pick_unique(candidates, weights, 5)
+        return sorted([fixed] + picks)
+
+    def _algo_recency_gap_weighted(self, fixed=1, recent_window=120):
+        recent = self.get_recent_draws(recent_window)
+        recent_counter = Counter()
+        last_seen = {n: None for n in range(1, 46)}
+        for idx, draw in enumerate(recent):
+            for n in draw.get("numbers", []):
+                recent_counter[n] += 1
+                if last_seen[n] is None:
+                    last_seen[n] = idx
+        candidates = [n for n in range(1, 46) if n != fixed]
+        weights = []
+        for n in candidates:
+            hot = recent_counter.get(n, 0) + 1
+            gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
+            weights.append((hot ** 1.15) * (gap ** 0.35))
+        picks = self._weighted_pick_unique(candidates, weights, 5)
+        return sorted([fixed] + picks)
+
+    def _algo_pair_correlation(self, fixed=1):
+        co = Counter()
+        for draw in self.data.values():
+            nums = sorted(draw.get("numbers") or [])
+            if len(nums) != 6:
+                continue
+            for i in range(len(nums)):
+                for j in range(i + 1, len(nums)):
+                    co[(nums[i], nums[j])] += 1
+        selected = [fixed]
+        candidates = set(range(1, 46)) - {fixed}
+        while len(selected) < 6 and candidates:
+            best_n = None
+            best_score = -1
+            for n in candidates:
+                s = 0
+                for p in selected:
+                    a, b = sorted((n, p))
+                    s += co.get((a, b), 0)
+                if s > best_score:
+                    best_score = s
+                    best_n = n
+            selected.append(best_n if best_n is not None else random.choice(list(candidates)))
+            candidates.discard(selected[-1])
+        return sorted(selected)
+
+    def _algo_constraint_balanced(self, fixed=1, tries=5000):
+        # Balanced rejection sampler with fixed number
+        target_odd = {2, 3, 4}
+        for _ in range(tries):
+            picks = random.sample([n for n in range(1, 46) if n != fixed], 5)
+            nums = sorted([fixed] + picks)
+            odd_cnt = sum(1 for n in nums if n % 2 == 1)
+            total = sum(nums)
+            consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
+            decade_bins = [0, 0, 0, 0, 0]
+            for n in nums:
+                if 1 <= n <= 10: decade_bins[0] += 1
+                elif 11 <= n <= 20: decade_bins[1] += 1
+                elif 21 <= n <= 30: decade_bins[2] += 1
+                elif 31 <= n <= 40: decade_bins[3] += 1
+                else: decade_bins[4] += 1
+            if odd_cnt not in target_odd:
+                continue
+            if not (95 <= total <= 185):
+                continue
+            if consec_pairs > 1:
+                continue
+            if max(decade_bins) > 3:
+                continue
+            return nums
+        return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
+
+    def generate_numbers_by_mode(self, mode: str, fixed=1):
+        if mode == "freq":
+            return self._algo_frequency_weighted(fixed=fixed)
+        if mode == "recent":
+            return self._algo_recency_gap_weighted(fixed=fixed)
+        if mode == "pair":
+            return self._algo_pair_correlation(fixed=fixed)
+        if mode == "balanced":
+            return self._algo_constraint_balanced(fixed=fixed)
+        return self.generate_numbers()
+
     # -----------------------------
     # UI
     # -----------------------------
@@ -1269,18 +1370,24 @@ class LottoApp(QMainWindow):
 
     def _roll_generator_numbers(self):
         self.gen_roll_step += 1
-        nums = self.generate_numbers()
+        nums = self.generate_numbers_by_mode(self.gen_mode)
         self._clear_layout_widgets(self.gen_row)
         for n in nums:
             self.gen_row.addWidget(make_ball(n, size=50))
         if self.gen_roll_step >= 12:
             self.gen_roll_timer.stop()
-            final_nums = self.generate_numbers()
+            final_nums = self.generate_numbers_by_mode(self.gen_mode)
             self._clear_layout_widgets(self.gen_row)
             for n in final_nums:
                 self.gen_row.addWidget(make_ball(n, size=56))
             self.gen_hint.setText("생성 완료")
-            self.gen_last_label.setText("  ".join(map(str, final_nums)))
+            mode_label = {
+                "freq": "빈도 가중",
+                "recent": "최근성+간격",
+                "pair": "공출현 상관",
+                "balanced": "제약 균형"
+            }.get(self.gen_mode, "랜덤")
+            self.gen_last_label.setText(f"[{mode_label}] " + "  ".join(map(str, final_nums)))
 
     # -----------------------------
     # Generator Page
@@ -1303,6 +1410,18 @@ class LottoApp(QMainWindow):
         self.gen_hint = QLabel("버튼을 누르면 추천 번호가 애니메이션으로 생성됩니다.")
         self.gen_hint.setObjectName("Muted")
         cl.addWidget(self.gen_hint)
+        self.gen_mode = "balanced"
+        self.gen_modes = [
+            ("balanced", "제약 균형"),
+            ("freq", "빈도 가중"),
+            ("recent", "최근성+간격"),
+            ("pair", "공출현 상관"),
+        ]
+        self.gen_mode_idx = 0
+        self.gen_mode_btn = QPushButton("모드: 제약 균형")
+        self.gen_mode_btn.setObjectName("PrimaryBtn")
+        self.gen_mode_btn.setFixedHeight(42)
+        self.gen_mode_btn.clicked.connect(self.on_cycle_gen_mode)
 
         self.gen_row = QHBoxLayout()
         self.gen_row.setSpacing(10)
@@ -1317,6 +1436,7 @@ class LottoApp(QMainWindow):
         gen_btn.setFixedHeight(42)
         gen_btn.clicked.connect(self.on_generate_page)
         btn_row.addWidget(gen_btn)
+        btn_row.addWidget(self.gen_mode_btn)
 
         clear_btn = QPushButton("지우기")
         clear_btn.setObjectName("PrimaryBtn")
@@ -1346,6 +1466,12 @@ class LottoApp(QMainWindow):
             self.gen_roll_timer = QTimer(self)
             self.gen_roll_timer.timeout.connect(self._roll_generator_numbers)
         self.gen_roll_timer.start(70)
+
+    def on_cycle_gen_mode(self):
+        self.gen_mode_idx = (self.gen_mode_idx + 1) % len(self.gen_modes)
+        self.gen_mode, mode_text = self.gen_modes[self.gen_mode_idx]
+        self.gen_mode_btn.setText(f"모드: {mode_text}")
+        self.gen_hint.setText(f"현재 모드: {mode_text} / 1번 고정 생성")
 
     # -----------------------------
     # Config Page
