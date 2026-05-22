@@ -748,6 +748,21 @@ class LottoApp(QMainWindow):
             return self._algo_constraint_balanced(fixed=fixed)
         return self.generate_numbers()
 
+    def generate_number_lines(self, mode: str, fixed=1, line_count=5):
+        lines = []
+        seen = set()
+        guard = 0
+        while len(lines) < line_count and guard < line_count * 30:
+            guard += 1
+            nums = tuple(self.generate_numbers_by_mode(mode, fixed=fixed))
+            if nums in seen:
+                continue
+            seen.add(nums)
+            lines.append(list(nums))
+        while len(lines) < line_count:
+            lines.append(self.generate_numbers_by_mode(mode, fixed=fixed))
+        return lines
+
     # -----------------------------
     # UI
     # -----------------------------
@@ -1376,7 +1391,8 @@ class LottoApp(QMainWindow):
             self.gen_row.addWidget(make_ball(n, size=50))
         if self.gen_roll_step >= 12:
             self.gen_roll_timer.stop()
-            final_nums = self.generate_numbers_by_mode(self.gen_mode)
+            final_lines = self.generate_number_lines(self.gen_mode, fixed=1, line_count=5)
+            final_nums = final_lines[0]
             self._clear_layout_widgets(self.gen_row)
             for n in final_nums:
                 self.gen_row.addWidget(make_ball(n, size=56))
@@ -1387,7 +1403,8 @@ class LottoApp(QMainWindow):
                 "pair": "공출현 상관",
                 "balanced": "제약 균형"
             }.get(self.gen_mode, "랜덤")
-            self.gen_last_label.setText(f"[{mode_label}] " + "  ".join(map(str, final_nums)))
+            lines_text = [f"{i+1}번: " + "  ".join(map(str, nums)) for i, nums in enumerate(final_lines)]
+            self.gen_last_label.setText(f"[{mode_label}]\n" + "\n".join(lines_text))
 
     # -----------------------------
     # Generator Page
@@ -1453,6 +1470,7 @@ class LottoApp(QMainWindow):
         history_lay.addWidget(history_title)
         self.gen_last_label = QLabel("-")
         self.gen_last_label.setObjectName("Muted")
+        self.gen_last_label.setWordWrap(True)
         history_lay.addWidget(self.gen_last_label)
 
         layout.addWidget(card)
