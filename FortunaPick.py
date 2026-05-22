@@ -1444,6 +1444,12 @@ class LottoApp(QMainWindow):
     def on_generate_page(self):
         pass
 
+    def on_cycle_gen_mode(self):
+        self.gen_mode_idx = (self.gen_mode_idx + 1) % len(self.gen_modes)
+        self.gen_mode, mode_text = self.gen_modes[self.gen_mode_idx]
+        self.gen_mode_btn.setText(f"모드: {mode_text}")
+        self.gen_hint.setText(f"현재 모드: {mode_text} / 1번 고정 생성")
+
     # -----------------------------
     # Config Page
     # -----------------------------
