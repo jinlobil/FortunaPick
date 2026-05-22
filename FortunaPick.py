@@ -757,9 +757,10 @@ class LottoApp(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        # ── ROW 1: Number Trends + Range Distribution ──
-        top_wrap = QHBoxLayout()
-        top_wrap.setSpacing(16)
+        # ── ROW 1~2: Number Trends + Range Distribution + Latest cards ──
+        hero_grid = QGridLayout()
+        hero_grid.setHorizontalSpacing(16)
+        hero_grid.setVerticalSpacing(16)
 
         trend_card, trend_layout = make_card(min_h=190)
         title = QLabel("Number Trends")
@@ -789,21 +790,20 @@ class LottoApp(QMainWindow):
         trend_layout.addLayout(self.trend_balls_row)
         trend_layout.addStretch(1)
 
-        right_card, right_lay = make_card(min_h=260)
+        right_card, right_lay = make_card(min_h=330)
         chart_title = QLabel("Range Distribution")
         chart_title.setObjectName("CardTitle")
         right_lay.addWidget(chart_title)
         self.donut = DonutChart()
-        self.donut.setMinimumSize(260, 210)
+        self.donut.setMinimumSize(320, 280)
         labels, values = self.decade_distribution()
         self.donut.set_data(labels, values, title="Total Picks")
         right_lay.addWidget(self.donut, 1)
 
-        top_wrap.addWidget(trend_card, 5)
-        top_wrap.addWidget(right_card, 4)
-        layout.addLayout(top_wrap)
+        hero_grid.addWidget(trend_card, 0, 0)
+        hero_grid.addWidget(right_card, 0, 1, 2, 1)
 
-        # ── ROW 2: Latest Round + Latest Numbers + Top Numbers ──
+        # ── ROW 2: Latest Round + Latest Numbers ──
         mid_wrap = QHBoxLayout()
         mid_wrap.setSpacing(16)
 
@@ -834,15 +834,14 @@ class LottoApp(QMainWindow):
             self.latest_win_row.addWidget(make_bonus_ball(latest_draw.get("bonus", 0), size=42))
         l_mid.addStretch(1)
 
-        left_mid_wrap = QHBoxLayout()
-        left_mid_wrap.setSpacing(16)
-        left_mid_wrap.addWidget(c1, 1)
-        left_mid_wrap.addWidget(c_mid, 2)
-        left_mid_holder = QWidget()
-        left_mid_holder.setLayout(left_mid_wrap)
-        mid_wrap.addWidget(left_mid_holder, 5)
-        mid_wrap.addStretch(4)
-        layout.addLayout(mid_wrap)
+        mid_wrap.addWidget(c1, 1)
+        mid_wrap.addWidget(c_mid, 2)
+        mid_holder = QWidget()
+        mid_holder.setLayout(mid_wrap)
+        hero_grid.addWidget(mid_holder, 1, 0)
+        hero_grid.setColumnStretch(0, 5)
+        hero_grid.setColumnStretch(1, 4)
+        layout.addLayout(hero_grid)
 
         # ── ROW 3: Frequency Bar Chart (full width) ──
         freq_card, freq_lay = make_card(min_h=200)
@@ -985,12 +984,16 @@ class LottoApp(QMainWindow):
         bottom_row.setSpacing(12)
 
         hist_card, hist_lay = make_card(min_h=320)
+        title_row = QHBoxLayout()
         hist_title = QLabel("최근 당첨번호 히스토리")
         hist_title.setObjectName("CardTitle")
-        hist_lay.addWidget(hist_title)
         sub_hist = QLabel("최근 8회차")
         sub_hist.setObjectName("Muted")
-        hist_lay.addWidget(sub_hist)
+        sub_hist.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.58);")
+        title_row.addWidget(hist_title)
+        title_row.addWidget(sub_hist)
+        title_row.addStretch(1)
+        hist_lay.addLayout(title_row)
 
         self.history_grid = QGridLayout()
         self.history_grid.setHorizontalSpacing(4)
@@ -1013,7 +1016,7 @@ class LottoApp(QMainWindow):
             self.top_numbers_layout.addWidget(empty)
         else:
             top1_cnt = freq.most_common(1)[0][1]
-            for num, cnt in freq.most_common(5):
+            for num, cnt in freq.most_common(8):
                 row_w = QHBoxLayout()
                 row_w.setSpacing(10)
                 num_lbl = QLabel(str(num))
@@ -1068,7 +1071,7 @@ class LottoApp(QMainWindow):
             row_w = QWidget()
             row_lay = QHBoxLayout(row_w)
             row_lay.setContentsMargins(0, 2, 0, 2)
-            row_lay.setSpacing(4)
+            row_lay.setSpacing(3)
 
             round_lbl = QLabel(f"#{draw['round']}")
             round_lbl.setFixedWidth(40)
@@ -1080,20 +1083,20 @@ class LottoApp(QMainWindow):
             if len(date_str) == 8:
                 date_str = f"{date_str[:4]}.{date_str[4:6]}.{date_str[6:]}"
             date_lbl = QLabel(date_str)
-            date_lbl.setFixedWidth(72)
+            date_lbl.setFixedWidth(68)
             date_lbl.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.38);")
             date_lbl.setAlignment(Qt.AlignCenter)
             row_lay.addWidget(date_lbl)
 
             for n in draw.get("numbers", []):
-                row_lay.addWidget(make_ball(n, size=28))
+                row_lay.addWidget(make_ball(n, size=32))
 
             plus = QLabel("+")
-            plus.setFixedWidth(10)
+            plus.setFixedWidth(8)
             plus.setAlignment(Qt.AlignCenter)
             plus.setStyleSheet("font-size:11px; font-weight:800; color:rgba(255,255,255,0.45);")
             row_lay.addWidget(plus)
-            row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=28))
+            row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=32))
             row = idx // 2
             col = idx % 2
             self.history_grid.addWidget(row_w, row, col)
@@ -1169,7 +1172,7 @@ class LottoApp(QMainWindow):
                 self.top_numbers_layout.addWidget(empty)
             else:
                 top1_cnt = freq.most_common(1)[0][1]
-                for num, cnt in freq.most_common(5):
+                for num, cnt in freq.most_common(8):
                     row_w = QHBoxLayout()
                     row_w.setSpacing(10)
                     num_lbl = QLabel(str(num))
