@@ -12,13 +12,12 @@ from PyQt5.QtWidgets import (
     QStackedWidget, QSizePolicy, QLineEdit, QMessageBox,
     QGraphicsDropShadowEffect, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer, QEasingCurve, QPropertyAnimation
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QPen, QBrush, QFont
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPixmap, QColor
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-import numpy as np
+from matplotlib.patches import Rectangle
 
 
 # ============================================================
@@ -369,7 +368,7 @@ class DonutChart(QWidget):
         y_positions = [0.86, 0.68, 0.50, 0.32, 0.14]
         for i, (lbl, w) in enumerate(zip(labels, wedges)):
             y = y_positions[i] if i < len(y_positions) else max(0.10, 0.86 - i * 0.16)
-            rect = plt.Rectangle(
+            rect = Rectangle(
                 (0.0, y - 0.04), 0.18, 0.08,
                 color=w.get_facecolor(),
                 transform=lax.transAxes,
@@ -1239,6 +1238,10 @@ class LottoApp(QMainWindow):
         if hasattr(self, "cp_total_lbl"):
             total_draws, with_consec, max_streak = self.consecutive_pattern_stats()
             consec_pct = with_consec / total_draws * 100 if total_draws > 0 else 0
+            self.cp_total_lbl.findChildren(QLabel)[0].setText(str(total_draws))
+            self.cp_consec_lbl.findChildren(QLabel)[0].setText(str(with_consec))
+            self.cp_pct_lbl.findChildren(QLabel)[0].setText(f"{consec_pct:.1f}%")
+            self.cp_max_lbl.findChildren(QLabel)[0].setText(str(max_streak))
 
         if hasattr(self, "latest_win_row"):
             self.clear_layout(self.latest_win_row)
