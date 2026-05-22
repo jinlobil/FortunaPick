@@ -834,50 +834,8 @@ class LottoApp(QMainWindow):
             self.latest_win_row.addWidget(make_bonus_ball(latest_draw.get("bonus", 0), size=42))
         l_mid.addStretch(1)
 
-        c2, l2 = make_card(min_h=130)
-        t2 = QLabel("상위 출현 번호")
-        t2.setObjectName("CardTitle")
-        l2.addWidget(t2)
-        self.top_numbers_layout = QVBoxLayout()
-        self.top_numbers_layout.setSpacing(5)
-        l2.addLayout(self.top_numbers_layout)
-        freq = self.number_frequency()
-        if not freq:
-            empty = QLabel("No cache data")
-            empty.setObjectName("Muted")
-            self.top_numbers_layout.addWidget(empty)
-        else:
-            top1_cnt = freq.most_common(1)[0][1]
-            for num, cnt in freq.most_common(5):
-                row_w = QHBoxLayout()
-                row_w.setSpacing(6)
-                num_lbl = QLabel(str(num))
-                num_lbl.setFixedWidth(24)
-                num_lbl.setStyleSheet("font-size:13px; font-weight:800; color:#2ec996;")
-                bar_pct = cnt / top1_cnt if top1_cnt else 0
-                bar_bg = QFrame()
-                bar_bg.setFixedHeight(6)
-                bar_bg.setStyleSheet("background:rgba(255,255,255,0.10); border-radius:3px;")
-                bar_bg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                bar_fg = QFrame(bar_bg)
-                bar_fg.setFixedHeight(6)
-                bar_fg.setStyleSheet("background:#2ec996; border-radius:3px;")
-                bar_fg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                # width will be set proportionally via stylesheet
-                bar_fg.setFixedWidth(max(8, int(bar_pct * 140)))
-                cnt_lbl = QLabel(f"{cnt}회")
-                cnt_lbl.setFixedWidth(42)
-                cnt_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                cnt_lbl.setStyleSheet("font-size:11px; font-weight:600; color:rgba(255,255,255,0.65);")
-                row_w.addWidget(num_lbl)
-                row_w.addWidget(bar_bg)
-                row_w.addWidget(cnt_lbl)
-                self.top_numbers_layout.addLayout(row_w)
-        l2.addStretch(1)
-
         mid_wrap.addWidget(c1, 1)
         mid_wrap.addWidget(c_mid, 2)
-        mid_wrap.addWidget(c2, 1)
         layout.addLayout(mid_wrap)
 
         # ── ROW 3: Frequency Bar Chart (full width) ──
@@ -1016,7 +974,10 @@ class LottoApp(QMainWindow):
         stat_row.addWidget(cp_card, 1)
         layout.addLayout(stat_row)
 
-        # ── ROW 5: Recent N Draws History ──
+        # ── ROW 5: Recent History + Top Numbers (50:50) ──
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+
         hist_card, hist_lay = make_card(min_h=320)
         hist_title = QLabel("최근 당첨번호 히스토리")
         hist_title.setObjectName("CardTitle")
@@ -1031,7 +992,49 @@ class LottoApp(QMainWindow):
         hist_lay.addLayout(self.history_grid)
         self._populate_history()
 
-        layout.addWidget(hist_card)
+        top_card, top_lay = make_card(min_h=320)
+        top_title = QLabel("상위 출현 번호")
+        top_title.setObjectName("CardTitle")
+        top_lay.addWidget(top_title)
+        self.top_numbers_layout = QVBoxLayout()
+        self.top_numbers_layout.setSpacing(5)
+        top_lay.addLayout(self.top_numbers_layout)
+        freq = self.number_frequency()
+        if not freq:
+            empty = QLabel("No cache data")
+            empty.setObjectName("Muted")
+            self.top_numbers_layout.addWidget(empty)
+        else:
+            top1_cnt = freq.most_common(1)[0][1]
+            for num, cnt in freq.most_common(5):
+                row_w = QHBoxLayout()
+                row_w.setSpacing(6)
+                num_lbl = QLabel(str(num))
+                num_lbl.setFixedWidth(24)
+                num_lbl.setStyleSheet("font-size:13px; font-weight:800; color:#2ec996;")
+                bar_pct = cnt / top1_cnt if top1_cnt else 0
+                bar_bg = QFrame()
+                bar_bg.setFixedHeight(6)
+                bar_bg.setStyleSheet("background:rgba(255,255,255,0.10); border-radius:3px;")
+                bar_bg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                bar_fg = QFrame(bar_bg)
+                bar_fg.setFixedHeight(6)
+                bar_fg.setStyleSheet("background:#2ec996; border-radius:3px;")
+                bar_fg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                bar_fg.setFixedWidth(max(8, int(bar_pct * 140)))
+                cnt_lbl = QLabel(f"{cnt}회")
+                cnt_lbl.setFixedWidth(42)
+                cnt_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                cnt_lbl.setStyleSheet("font-size:11px; font-weight:600; color:rgba(255,255,255,0.65);")
+                row_w.addWidget(num_lbl)
+                row_w.addWidget(bar_bg)
+                row_w.addWidget(cnt_lbl)
+                self.top_numbers_layout.addLayout(row_w)
+        top_lay.addStretch(1)
+
+        bottom_row.addWidget(hist_card, 1)
+        bottom_row.addWidget(top_card, 1)
+        layout.addLayout(bottom_row)
 
         layout.addStretch(1)
 
