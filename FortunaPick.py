@@ -659,7 +659,7 @@ class LottoApp(QMainWindow):
         # Sidebar
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(160)
+        sidebar.setFixedWidth(230)
         side_lay = QVBoxLayout(sidebar)
         side_lay.setContentsMargins(18, 18, 18, 18)
         side_lay.setSpacing(14)
@@ -682,7 +682,7 @@ class LottoApp(QMainWindow):
         logo_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         brand_lbl = QLabel("FortunaPick")
-        brand_lbl.setStyleSheet("font-size:30px; font-weight:900; letter-spacing:0px; color:white;")
+        brand_lbl.setStyleSheet("font-size:28px; font-weight:900; letter-spacing:0px; color:white;")
         brand_lbl.setWordWrap(False)
         brand_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
