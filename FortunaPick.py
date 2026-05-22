@@ -738,6 +738,8 @@ class LottoApp(QMainWindow):
         return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
 
     def generate_numbers_by_mode(self, mode: str, fixed=1):
+        if mode == "random":
+            return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
         if mode == "freq":
             return self._algo_frequency_weighted(fixed=fixed)
         if mode == "recent":
@@ -1383,28 +1385,12 @@ class LottoApp(QMainWindow):
             if widget:
                 widget.deleteLater()
 
-    def _roll_generator_numbers(self):
-        self.gen_roll_step += 1
-        nums = self.generate_numbers_by_mode(self.gen_mode)
-        self._clear_layout_widgets(self.gen_row)
+    def _set_mode_card_numbers(self, mode_key: str, ball_row: QHBoxLayout, text_label: QLabel):
+        nums = self.generate_numbers_by_mode(mode_key, fixed=1)
+        self._clear_layout_widgets(ball_row)
         for n in nums:
-            self.gen_row.addWidget(make_ball(n, size=50))
-        if self.gen_roll_step >= 12:
-            self.gen_roll_timer.stop()
-            final_lines = self.generate_number_lines(self.gen_mode, fixed=1, line_count=5)
-            final_nums = final_lines[0]
-            self._clear_layout_widgets(self.gen_row)
-            for n in final_nums:
-                self.gen_row.addWidget(make_ball(n, size=56))
-            self.gen_hint.setText("생성 완료")
-            mode_label = {
-                "freq": "빈도 가중",
-                "recent": "최근성+간격",
-                "pair": "공출현 상관",
-                "balanced": "제약 균형"
-            }.get(self.gen_mode, "랜덤")
-            lines_text = [f"{i+1}번: " + "  ".join(map(str, nums)) for i, nums in enumerate(final_lines)]
-            self.gen_last_label.setText(f"[{mode_label}]\n" + "\n".join(lines_text))
+            ball_row.addWidget(make_ball(n, size=52))
+        text_label.setText("  ".join(map(str, nums)))
 
     # -----------------------------
     # Generator Page
@@ -1419,71 +1405,44 @@ class LottoApp(QMainWindow):
         header.setObjectName("SectionTitle")
         layout.addWidget(header)
 
-        card, cl = make_card(min_h=320)
-        title = QLabel("추천 번호 머신")
-        title.setObjectName("CardTitle")
-        cl.addWidget(title)
-
-        self.gen_hint = QLabel("버튼을 누르면 추천 번호가 애니메이션으로 생성됩니다.")
-        self.gen_hint.setObjectName("Muted")
-        cl.addWidget(self.gen_hint)
-        self.gen_mode = "balanced"
-        self.gen_modes = [
-            ("balanced", "제약 균형"),
-            ("freq", "빈도 가중"),
-            ("recent", "최근성+간격"),
-            ("pair", "공출현 상관"),
+        mode_specs = [
+            ("random", "1) 랜덤 알고리즘 (1번 고정)"),
+            ("freq", "2) 빈도 가중 알고리즘 (1번 고정)"),
+            ("recent", "3) 최근성+간격 알고리즘 (1번 고정)"),
+            ("pair", "4) 공출현 상관 알고리즘 (1번 고정)"),
+            ("balanced", "5) 제약 균형 알고리즘 (1번 고정)"),
         ]
-        self.gen_mode_idx = 0
-        self.gen_mode_btn = QPushButton("모드: 제약 균형")
-        self.gen_mode_btn.setObjectName("PrimaryBtn")
-        self.gen_mode_btn.setFixedHeight(42)
-        self.gen_mode_btn.clicked.connect(self.on_cycle_gen_mode)
 
-        self.gen_row = QHBoxLayout()
-        self.gen_row.setSpacing(10)
-        self.gen_row.setAlignment(Qt.AlignLeft)
-        cl.addLayout(self.gen_row)
+        for mode_key, mode_title in mode_specs:
+            card, cl = make_card(min_h=150)
+            title = QLabel(mode_title)
+            title.setObjectName("CardTitle")
+            cl.addWidget(title)
+            hint = QLabel("생성 버튼을 누르면 해당 알고리즘으로 1세트를 생성합니다.")
+            hint.setObjectName("Muted")
+            cl.addWidget(hint)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.setAlignment(Qt.AlignLeft)
+            cl.addLayout(row)
 
-        gen_btn = QPushButton("번호 생성")
-        gen_btn.setObjectName("PrimaryBtn")
-        gen_btn.setFixedHeight(42)
-        gen_btn.clicked.connect(self.on_generate_page)
-        btn_row.addWidget(gen_btn)
-        btn_row.addWidget(self.gen_mode_btn)
+            result_lbl = QLabel("-")
+            result_lbl.setObjectName("Muted")
+            cl.addWidget(result_lbl)
 
-        clear_btn = QPushButton("지우기")
-        clear_btn.setObjectName("PrimaryBtn")
-        clear_btn.setFixedHeight(42)
-        clear_btn.clicked.connect(lambda: self._clear_layout_widgets(self.gen_row))
-        btn_row.addWidget(clear_btn)
+            btn = QPushButton("번호 생성")
+            btn.setObjectName("PrimaryBtn")
+            btn.setFixedHeight(38)
+            btn.clicked.connect(lambda _, m=mode_key, r=row, l=result_lbl: self._set_mode_card_numbers(m, r, l))
+            cl.addWidget(btn, alignment=Qt.AlignLeft)
+            layout.addWidget(card)
 
-        cl.addStretch(1)
-        cl.addLayout(btn_row)
-
-        history_card, history_lay = make_card(min_h=120)
-        history_title = QLabel("마지막 생성 번호")
-        history_title.setObjectName("CardTitle")
-        history_lay.addWidget(history_title)
-        self.gen_last_label = QLabel("-")
-        self.gen_last_label.setObjectName("Muted")
-        self.gen_last_label.setWordWrap(True)
-        history_lay.addWidget(self.gen_last_label)
-
-        layout.addWidget(card)
-        layout.addWidget(history_card)
         layout.addStretch(1)
         return page
 
     def on_generate_page(self):
-        self.gen_roll_step = 0
-        if not hasattr(self, "gen_roll_timer"):
-            self.gen_roll_timer = QTimer(self)
-            self.gen_roll_timer.timeout.connect(self._roll_generator_numbers)
-        self.gen_roll_timer.start(70)
+        pass
 
     def on_cycle_gen_mode(self):
         self.gen_mode_idx = (self.gen_mode_idx + 1) % len(self.gen_modes)
