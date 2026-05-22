@@ -1025,9 +1025,10 @@ class LottoApp(QMainWindow):
         sub_hist.setObjectName("Muted")
         hist_lay.addWidget(sub_hist)
 
-        self.history_vbox = QVBoxLayout()
-        self.history_vbox.setSpacing(4)
-        hist_lay.addLayout(self.history_vbox)
+        self.history_grid = QGridLayout()
+        self.history_grid.setHorizontalSpacing(14)
+        self.history_grid.setVerticalSpacing(6)
+        hist_lay.addLayout(self.history_grid)
         self._populate_history()
 
         layout.addWidget(hist_card)
@@ -1040,8 +1041,8 @@ class LottoApp(QMainWindow):
 
     def _populate_history(self):
         # Clear existing widgets
-        while self.history_vbox.count():
-            item = self.history_vbox.takeAt(0)
+        while self.history_grid.count():
+            item = self.history_grid.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -1050,17 +1051,17 @@ class LottoApp(QMainWindow):
         if not recent:
             lbl = QLabel("데이터 없음")
             lbl.setObjectName("Muted")
-            self.history_vbox.addWidget(lbl)
+            self.history_grid.addWidget(lbl, 0, 0, 1, 2)
             return
 
-        for draw in recent:
+        for idx, draw in enumerate(recent):
             row_w = QWidget()
             row_lay = QHBoxLayout(row_w)
             row_lay.setContentsMargins(0, 2, 0, 2)
-            row_lay.setSpacing(10)
+            row_lay.setSpacing(6)
 
             round_lbl = QLabel(f"#{draw['round']}")
-            round_lbl.setFixedWidth(50)
+            round_lbl.setFixedWidth(40)
             round_lbl.setStyleSheet("font-size:12px; font-weight:700; color:rgba(255,255,255,0.55);")
             round_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             row_lay.addWidget(round_lbl)
@@ -1069,7 +1070,7 @@ class LottoApp(QMainWindow):
             if len(date_str) == 8:
                 date_str = f"{date_str[:4]}.{date_str[4:6]}.{date_str[6:]}"
             date_lbl = QLabel(date_str)
-            date_lbl.setFixedWidth(82)
+            date_lbl.setFixedWidth(72)
             date_lbl.setStyleSheet("font-size:11px; color:rgba(255,255,255,0.38);")
             date_lbl.setAlignment(Qt.AlignCenter)
             row_lay.addWidget(date_lbl)
@@ -1083,7 +1084,9 @@ class LottoApp(QMainWindow):
             row_lay.addWidget(make_bonus_ball(draw.get("bonus", 0), size=28))
             row_lay.addStretch(1)
 
-            self.history_vbox.addWidget(row_w)
+            row = idx // 2
+            col = idx % 2
+            self.history_grid.addWidget(row_w, row, col)
 
     # -----------------------------
     # Data
@@ -1241,8 +1244,15 @@ class LottoApp(QMainWindow):
                 self.latest_win_row.addWidget(bonus_lbl)
                 self.latest_win_row.addWidget(make_bonus_ball(latest_draw.get("bonus", 0), size=42))
 
-        if hasattr(self, "history_vbox"):
+        if hasattr(self, "history_grid"):
             self._populate_history()
+
+    def _clear_layout_widgets(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
 
     def _roll_generator_numbers(self):
         self.gen_roll_step += 1
