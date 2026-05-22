@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import random
+import hashlib
 import requests
 from collections import Counter
 
@@ -659,14 +660,14 @@ class LottoApp(QMainWindow):
             ws.pop(idx)
         return out
 
-    def _algo_frequency_weighted(self, fixed=1):
+    def _algo_frequency_weighted(self):
         freq = self.number_frequency()
-        candidates = [n for n in range(1, 46) if n != fixed]
+        candidates = [n for n in range(1, 46)]
         weights = [(freq.get(n, 0) + 1) ** 1.25 for n in candidates]
         picks = self._weighted_pick_unique(candidates, weights, 5)
-        return sorted([fixed] + picks)
+        return sorted(picks)
 
-    def _algo_recency_gap_weighted(self, fixed=1, recent_window=120):
+    def _algo_recency_gap_weighted(self, recent_window=120):
         recent = self.get_recent_draws(recent_window)
         recent_counter = Counter()
         last_seen = {n: None for n in range(1, 46)}
@@ -675,16 +676,16 @@ class LottoApp(QMainWindow):
                 recent_counter[n] += 1
                 if last_seen[n] is None:
                     last_seen[n] = idx
-        candidates = [n for n in range(1, 46) if n != fixed]
+        candidates = [n for n in range(1, 46)]
         weights = []
         for n in candidates:
             hot = recent_counter.get(n, 0) + 1
             gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
             weights.append((hot ** 1.15) * (gap ** 0.35))
         picks = self._weighted_pick_unique(candidates, weights, 5)
-        return sorted([fixed] + picks)
+        return sorted(picks)
 
-    def _algo_pair_correlation(self, fixed=1):
+    def _algo_pair_correlation(self):
         co = Counter()
         for draw in self.data.values():
             nums = sorted(draw.get("numbers") or [])
@@ -693,8 +694,8 @@ class LottoApp(QMainWindow):
             for i in range(len(nums)):
                 for j in range(i + 1, len(nums)):
                     co[(nums[i], nums[j])] += 1
-        selected = [fixed]
-        candidates = set(range(1, 46)) - {fixed}
+        selected = []
+        candidates = set(range(1, 46))
         while len(selected) < 6 and candidates:
             best_n = None
             best_score = -1
@@ -710,12 +711,12 @@ class LottoApp(QMainWindow):
             candidates.discard(selected[-1])
         return sorted(selected)
 
-    def _algo_constraint_balanced(self, fixed=1, tries=5000):
+    def _algo_constraint_balanced(self, tries=5000):
         # Balanced rejection sampler with fixed number
         target_odd = {2, 3, 4}
         for _ in range(tries):
-            picks = random.sample([n for n in range(1, 46) if n != fixed], 5)
-            nums = sorted([fixed] + picks)
+            picks = random.sample([n for n in range(1, 46)], 6)
+            nums = sorted(picks)
             odd_cnt = sum(1 for n in nums if n % 2 == 1)
             total = sum(nums)
             consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
@@ -735,34 +736,44 @@ class LottoApp(QMainWindow):
             if max(decade_bins) > 3:
                 continue
             return nums
-        return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
+        rng = self._stable_rng("balanced_fallback")
+        return sorted(rng.sample([n for n in range(1, 46)], 6))
 
-    def generate_numbers_by_mode(self, mode: str, fixed=1):
+
+    def _stable_rng(self, mode: str):
+        payload = json.dumps(self.data, sort_keys=True, ensure_ascii=False)
+        seed_src = f"{mode}|{payload}"
+        seed = int(hashlib.sha256(seed_src.encode("utf-8")).hexdigest()[:16], 16)
+        return random.Random(seed)
+
+    def generate_numbers_by_mode(self, mode: str):
+        random.seed(self._stable_rng(mode).randint(0, 2**31-1))
         if mode == "random":
-            return sorted([fixed] + random.sample([n for n in range(1, 46) if n != fixed], 5))
+            rng = self._stable_rng("random")
+            return sorted(rng.sample([n for n in range(1, 46)], 6))
         if mode == "freq":
-            return self._algo_frequency_weighted(fixed=fixed)
+            return self._algo_frequency_weighted()
         if mode == "recent":
-            return self._algo_recency_gap_weighted(fixed=fixed)
+            return self._algo_recency_gap_weighted()
         if mode == "pair":
-            return self._algo_pair_correlation(fixed=fixed)
+            return self._algo_pair_correlation()
         if mode == "balanced":
-            return self._algo_constraint_balanced(fixed=fixed)
+            return self._algo_constraint_balanced()
         return self.generate_numbers()
 
-    def generate_number_lines(self, mode: str, fixed=1, line_count=5):
+    def generate_number_lines(self, mode: str, line_count=5):
         lines = []
         seen = set()
         guard = 0
         while len(lines) < line_count and guard < line_count * 30:
             guard += 1
-            nums = tuple(self.generate_numbers_by_mode(mode, fixed=fixed))
+            nums = tuple(self.generate_numbers_by_mode(mode))
             if nums in seen:
                 continue
             seen.add(nums)
             lines.append(list(nums))
         while len(lines) < line_count:
-            lines.append(self.generate_numbers_by_mode(mode, fixed=fixed))
+            lines.append(self.generate_numbers_by_mode(mode))
         return lines
 
     # -----------------------------
@@ -1386,7 +1397,7 @@ class LottoApp(QMainWindow):
                 widget.deleteLater()
 
     def _set_mode_card_numbers(self, mode_key: str, ball_row: QHBoxLayout, text_label: QLabel):
-        nums = self.generate_numbers_by_mode(mode_key, fixed=1)
+        nums = self.generate_numbers_by_mode(mode_key)
         self._clear_layout_widgets(ball_row)
         for n in nums:
             ball_row.addWidget(make_ball(n, size=52))
@@ -1406,11 +1417,11 @@ class LottoApp(QMainWindow):
         layout.addWidget(header)
 
         mode_specs = [
-            ("random", "1) 랜덤 알고리즘 (1번 고정)"),
-            ("freq", "2) 빈도 가중 알고리즘 (1번 고정)"),
-            ("recent", "3) 최근성+간격 알고리즘 (1번 고정)"),
-            ("pair", "4) 공출현 상관 알고리즘 (1번 고정)"),
-            ("balanced", "5) 제약 균형 알고리즘 (1번 고정)"),
+            ("random", "1) 랜덤 알고리즘 "),
+            ("freq", "2) 빈도 가중 알고리즘 "),
+            ("recent", "3) 최근성+간격 알고리즘 "),
+            ("pair", "4) 공출현 상관 알고리즘 "),
+            ("balanced", "5) 제약 균형 알고리즘 "),
         ]
 
         for mode_key, mode_title in mode_specs:
@@ -1443,12 +1454,6 @@ class LottoApp(QMainWindow):
 
     def on_generate_page(self):
         pass
-
-    def on_cycle_gen_mode(self):
-        self.gen_mode_idx = (self.gen_mode_idx + 1) % len(self.gen_modes)
-        self.gen_mode, mode_text = self.gen_modes[self.gen_mode_idx]
-        self.gen_mode_btn.setText(f"모드: {mode_text}")
-        self.gen_hint.setText(f"현재 모드: {mode_text} / 1번 고정 생성")
 
     # -----------------------------
     # Config Page
