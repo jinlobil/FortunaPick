@@ -537,6 +537,7 @@ class LottoApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.data = safe_load_cache()
+        self._mode_result_cache = {}
         self.setWindowTitle("FortunaPick")
         self.resize(1400, 860)
         self.init_ui()
@@ -664,7 +665,7 @@ class LottoApp(QMainWindow):
         freq = self.number_frequency()
         candidates = [n for n in range(1, 46)]
         weights = [(freq.get(n, 0) + 1) ** 1.25 for n in candidates]
-        picks = self._weighted_pick_unique(candidates, weights, 5)
+        picks = self._weighted_pick_unique(candidates, weights, 6)
         return sorted(picks)
 
     def _algo_recency_gap_weighted(self, recent_window=120):
@@ -682,7 +683,7 @@ class LottoApp(QMainWindow):
             hot = recent_counter.get(n, 0) + 1
             gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
             weights.append((hot ** 1.15) * (gap ** 0.35))
-        picks = self._weighted_pick_unique(candidates, weights, 5)
+        picks = self._weighted_pick_unique(candidates, weights, 6)
         return sorted(picks)
 
     def _algo_pair_correlation(self):
@@ -736,29 +737,31 @@ class LottoApp(QMainWindow):
             if max(decade_bins) > 3:
                 continue
             return nums
-        rng = self._stable_rng("balanced_fallback")
-        return sorted(rng.sample([n for n in range(1, 46)], 6))
-
-
-    def _stable_rng(self, mode: str):
-        payload = json.dumps(self.data, sort_keys=True, ensure_ascii=False)
-        seed_src = f"{mode}|{payload}"
-        seed = int(hashlib.sha256(seed_src.encode("utf-8")).hexdigest()[:16], 16)
-        return random.Random(seed)
+        return sorted(random.sample([n for n in range(1, 46)], 6))
 
     def generate_numbers_by_mode(self, mode: str):
-        random.seed(self._stable_rng(mode).randint(0, 2**31-1))
+        latest_round = self.get_latest_round()
+        cache_key = (mode, latest_round)
+        if mode != "random" and cache_key in self._mode_result_cache:
+            return self._mode_result_cache[cache_key][:]
         if mode == "random":
-            rng = self._stable_rng("random")
-            return sorted(rng.sample([n for n in range(1, 46)], 6))
+            return sorted(random.sample([n for n in range(1, 46)], 6))
         if mode == "freq":
-            return self._algo_frequency_weighted()
+            result = self._algo_frequency_weighted()
+            self._mode_result_cache[cache_key] = result
+            return result[:]
         if mode == "recent":
-            return self._algo_recency_gap_weighted()
+            result = self._algo_recency_gap_weighted()
+            self._mode_result_cache[cache_key] = result
+            return result[:]
         if mode == "pair":
-            return self._algo_pair_correlation()
+            result = self._algo_pair_correlation()
+            self._mode_result_cache[cache_key] = result
+            return result[:]
         if mode == "balanced":
-            return self._algo_constraint_balanced()
+            result = self._algo_constraint_balanced()
+            self._mode_result_cache[cache_key] = result
+            return result[:]
         return self.generate_numbers()
 
     def generate_number_lines(self, mode: str, line_count=5):
