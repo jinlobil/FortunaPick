@@ -1017,7 +1017,7 @@ class LottoApp(QMainWindow):
         layout.addLayout(stat_row)
 
         # ── ROW 5: Recent N Draws History ──
-        hist_card, hist_lay = make_card(min_h=180)
+        hist_card, hist_lay = make_card(min_h=320)
         hist_title = QLabel("최근 당첨번호 히스토리")
         hist_title.setObjectName("CardTitle")
         hist_lay.addWidget(hist_title)
@@ -1031,26 +1031,6 @@ class LottoApp(QMainWindow):
         self._populate_history()
 
         layout.addWidget(hist_card)
-
-        # ── ROW 6: Quick Pick ──
-        c3, l3 = make_card(min_h=140)
-        t3 = QLabel("빠른 번호 생성")
-        t3.setObjectName("CardTitle")
-        l3.addWidget(t3)
-        self.quick_hint = QLabel("생성 버튼을 눌러 추천 번호를 확인하세요")
-        self.quick_hint.setObjectName("Muted")
-        l3.addWidget(self.quick_hint)
-        self.quick_ball_row = QHBoxLayout()
-        self.quick_ball_row.setSpacing(10)
-        self.quick_ball_row.setAlignment(Qt.AlignLeft)
-        l3.addLayout(self.quick_ball_row)
-        btn = QPushButton("생성")
-        btn.setObjectName("PrimaryBtn")
-        btn.setFixedHeight(40)
-        btn.clicked.connect(self.on_quick_generate)
-        l3.addStretch(1)
-        l3.addWidget(btn)
-        layout.addWidget(c3)
 
         layout.addStretch(1)
 
@@ -1263,37 +1243,6 @@ class LottoApp(QMainWindow):
 
         if hasattr(self, "history_vbox"):
             self._populate_history()
-
-    # -----------------------------
-    # Quick Pick
-    # -----------------------------
-    def on_quick_generate(self):
-        self.quick_roll_step = 0
-        if not hasattr(self, "quick_roll_timer"):
-            self.quick_roll_timer = QTimer(self)
-            self.quick_roll_timer.timeout.connect(self._roll_quick_numbers)
-        self.quick_roll_timer.start(70)
-
-    def _clear_layout_widgets(self, layout):
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
-    def _roll_quick_numbers(self):
-        self.quick_roll_step += 1
-        nums = self.generate_numbers()
-        self._clear_layout_widgets(self.quick_ball_row)
-        for n in nums:
-            self.quick_ball_row.addWidget(make_ball(n, size=44))
-        if self.quick_roll_step >= 12:
-            self.quick_roll_timer.stop()
-            final_nums = self.generate_numbers()
-            self._clear_layout_widgets(self.quick_ball_row)
-            for n in final_nums:
-                self.quick_ball_row.addWidget(make_ball(n, size=48))
-            self.quick_hint.setText("추천 번호가 생성되었습니다.")
 
     def _roll_generator_numbers(self):
         self.gen_roll_step += 1
