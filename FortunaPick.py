@@ -6,6 +6,7 @@ import random
 import hashlib
 import requests
 from collections import Counter
+from itertools import combinations
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame,
@@ -649,6 +650,105 @@ class LottoApp(QMainWindow):
         nums.sort()
         return nums
 
+    def _load_draws_for_algo(self):
+        draws = []
+        for round_no, item in self.data.items():
+            nums = item.get("numbers") or []
+            if len(nums) != 6:
+                continue
+            draws.append({
+                "round": int(round_no),
+                "date": item.get("date"),
+                "numbers": nums,
+                "bonus": item.get("bonus")
+            })
+        draws.sort(key=lambda x: x["round"])
+        return draws
+
+    def _get_last_seen_gap(self, draws, number):
+        if not draws:
+            return 0
+        last_round = draws[-1]["round"]
+        for draw in reversed(draws):
+            if number in draw["numbers"]:
+                return last_round - draw["round"]
+        return len(draws)
+
+    def _apply_position_offset(self, numbers):
+        offsets = [2, 6, 6, 0, 7, 7]
+        adjusted = []
+        for number, offset in zip(numbers, offsets):
+            new_number = number + offset
+            if new_number > 45:
+                new_number -= 45
+            adjusted.append(new_number)
+        return sorted(adjusted)
+
+    def _algo_fortuna(self):
+        draws = self._load_draws_for_algo()
+        if len(draws) < 30:
+            return self._algo_constraint_balanced()
+
+        target_round = self.get_latest_round() + 1
+        train_draws = [d for d in draws if d["round"] < target_round]
+        if not train_draws:
+            return self._algo_constraint_balanced()
+
+        all_counter = Counter()
+        recent_300_counter = Counter()
+        recent_100_counter = Counter()
+        recent_30_counter = Counter()
+
+        for d in train_draws:
+            all_counter.update(d["numbers"])
+        for d in train_draws[-300:]:
+            recent_300_counter.update(d["numbers"])
+        for d in train_draws[-100:]:
+            recent_100_counter.update(d["numbers"])
+        for d in train_draws[-30:]:
+            recent_30_counter.update(d["numbers"])
+
+        scores = {}
+        for n in range(1, 46):
+            gap = self._get_last_seen_gap(train_draws, n)
+            score = 0.0
+            score += all_counter[n] * 1.0
+            score += recent_300_counter[n] * 1.8
+            score += recent_100_counter[n] * 2.5
+            score += recent_30_counter[n] * 3.0
+            score += min(gap, 25) * 0.35
+            if gap == 0:
+                score -= 3
+            elif gap == 1:
+                score -= 1.5
+            scores[n] = score
+
+        ranked_numbers = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        candidates = ranked_numbers[:15]
+
+        best_combo = None
+        best_combo_score = -10e12
+        for combo in combinations(candidates, 6):
+            combo = sorted(combo)
+            total = sum(combo)
+            odd_count = sum(1 for x in combo if x % 2 == 1)
+            low_count = sum(1 for x in combo if x <= 22)
+            if not (115 <= total <= 165):
+                continue
+            if odd_count not in [2, 3, 4]:
+                continue
+            if low_count not in [2, 3, 4]:
+                continue
+            combo_score = sum(scores[x] for x in combo)
+            combo_score -= abs(total - 135) * 0.25
+            if combo_score > best_combo_score:
+                best_combo_score = combo_score
+                best_combo = combo
+
+        if not best_combo:
+            best_combo = sorted(candidates[:6])
+        return self._apply_position_offset(best_combo)
+
     def _weighted_pick_unique(self, candidates, weights, k):
         pool = list(candidates)
         ws = [max(0.0001, float(w)) for w in weights]
@@ -742,10 +842,12 @@ class LottoApp(QMainWindow):
     def generate_numbers_by_mode(self, mode: str):
         latest_round = self.get_latest_round()
         cache_key = (mode, latest_round)
-        if mode != "random" and cache_key in self._mode_result_cache:
+        if cache_key in self._mode_result_cache:
             return self._mode_result_cache[cache_key][:]
-        if mode == "random":
-            return sorted(random.sample([n for n in range(1, 46)], 6))
+        if mode == "fortuna":
+            result = self._algo_fortuna()
+            self._mode_result_cache[cache_key] = result
+            return result[:]
         if mode == "freq":
             result = self._algo_frequency_weighted()
             self._mode_result_cache[cache_key] = result
@@ -1420,11 +1522,11 @@ class LottoApp(QMainWindow):
         layout.addWidget(header)
 
         mode_specs = [
-            ("random", "1) 랜덤 알고리즘 "),
-            ("freq", "2) 빈도 가중 알고리즘 "),
-            ("recent", "3) 최근성+간격 알고리즘 "),
-            ("pair", "4) 공출현 상관 알고리즘 "),
-            ("balanced", "5) 제약 균형 알고리즘 "),
+            ("fortuna", "1) 포르투나 알고리즘"),
+            ("freq", "2) 빈도 가중 알고리즘"),
+            ("recent", "3) 최근성+간격 알고리즘"),
+            ("pair", "4) 공출현 상관 알고리즘"),
+            ("balanced", "5) 제약 균형 알고리즘"),
         ]
 
         for mode_key, mode_title in mode_specs:
