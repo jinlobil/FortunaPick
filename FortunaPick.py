@@ -17,6 +17,7 @@ from PyQt5.QtGui import QPixmap, QColor
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 
 
 # ============================================================
@@ -367,7 +368,7 @@ class DonutChart(QWidget):
         y_positions = [0.86, 0.68, 0.50, 0.32, 0.14]
         for i, (lbl, w) in enumerate(zip(labels, wedges)):
             y = y_positions[i] if i < len(y_positions) else max(0.10, 0.86 - i * 0.16)
-            rect = plt.Rectangle(
+            rect = Rectangle(
                 (0.0, y - 0.04), 0.18, 0.08,
                 color=w.get_facecolor(),
                 transform=lax.transAxes,
