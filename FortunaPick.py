@@ -3,9 +3,9 @@ import sys
 import os
 import json
 import random
-import hashlib
+import math
 import requests
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import combinations
 
 from PyQt5.QtWidgets import (
@@ -951,38 +951,128 @@ class LottoApp(QMainWindow):
 
     def _algo_constraint_balanced(self):
         draws = self._load_draws_for_algo()
-        if not draws:
+        if len(draws) < 30:
             return self.generate_numbers()
-        base = self._build_base_numbers(draws)
-        candidates = sorted(base["ranked_numbers"][:18])
-        best_combo = None
-        best_key = None
-        for combo in combinations(candidates, 6):
-            nums = sorted(combo)
-            odd_cnt = sum(1 for n in nums if n % 2 == 1)
-            total = sum(nums)
-            consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
-            decade_bins = [0, 0, 0, 0, 0]
-            for n in nums:
-                if 1 <= n <= 10: decade_bins[0] += 1
-                elif 11 <= n <= 20: decade_bins[1] += 1
-                elif 21 <= n <= 30: decade_bins[2] += 1
-                elif 31 <= n <= 40: decade_bins[3] += 1
-                else: decade_bins[4] += 1
-            if odd_cnt not in {2, 3, 4}:
-                continue
-            if not (95 <= total <= 185):
-                continue
-            if consec_pairs > 1:
-                continue
-            if max(decade_bins) > 3:
-                continue
-            spread = max(nums) - min(nums)
-            key = (-abs(total - 140), -consec_pairs, -max(decade_bins), spread, tuple(-n for n in nums))
-            if best_key is None or key > best_key:
-                best_key = key
-                best_combo = nums
-        return best_combo if best_combo else sorted(candidates[:6])
+
+        def get_band_pattern(numbers):
+            bands = [0, 0, 0, 0, 0]
+            for n in numbers:
+                if 1 <= n <= 9: bands[0] += 1
+                elif 10 <= n <= 19: bands[1] += 1
+                elif 20 <= n <= 29: bands[2] += 1
+                elif 30 <= n <= 39: bands[3] += 1
+                elif 40 <= n <= 45: bands[4] += 1
+            return tuple(bands)
+
+        def get_odd_even_pattern(numbers):
+            odd = sum(1 for n in numbers if n % 2 == 1)
+            return (odd, 6 - odd)
+
+        def get_consecutive_count(numbers):
+            nums = sorted(numbers)
+            return sum(1 for i in range(len(nums)-1) if nums[i+1] - nums[i] == 1)
+
+        def get_end_digit_pattern(numbers):
+            endings = Counter(n % 10 for n in numbers)
+            return max(endings.values()), sum(1 for v in endings.values() if v >= 2)
+
+        def apply_final_position_adjustment(numbers):
+            offsets = [2, 0, 0, 2, 12, 7]
+            adjusted = []
+            for number, offset in zip(sorted(numbers), offsets):
+                new_number = number + offset
+                if new_number > 45:
+                    new_number -= offset
+                adjusted.append(new_number)
+            return sorted(adjusted)
+
+        def build_history_patterns(ds):
+            band = Counter(); oe = Counter(); sb = Counter(); cc = Counter(); ed = Counter()
+            for d in ds:
+                nums = d["numbers"]
+                band[get_band_pattern(nums)] += 1
+                oe[get_odd_even_pattern(nums)] += 1
+                sb[(sum(nums)//10)*10] += 1
+                cc[get_consecutive_count(nums)] += 1
+                ed[get_end_digit_pattern(nums)] += 1
+            return {"band": band, "odd_even": oe, "sum_bucket": sb, "consecutive": cc, "end_digit": ed}
+
+        def build_pair_counter(ds):
+            pc = Counter()
+            for d in ds:
+                for a, b in combinations(d["numbers"], 2):
+                    pc[(a, b)] += 1
+            return pc
+
+        def build_transition_counter(ds):
+            tr = defaultdict(Counter)
+            for i in range(len(ds)-1):
+                cur = ds[i]["numbers"]; nxt = ds[i+1]["numbers"]
+                for c in cur:
+                    for n in nxt:
+                        tr[c][n] += 1
+            return tr
+
+        def safe_log_count(counter, key):
+            return math.log1p(counter.get(key, 0))
+
+        def build_number_scores(ds):
+            allc=Counter(); r300=Counter(); r100=Counter(); r30=Counter(); r10=Counter()
+            for d in ds: allc.update(d["numbers"])
+            for d in ds[-300:]: r300.update(d["numbers"])
+            for d in ds[-100:]: r100.update(d["numbers"])
+            for d in ds[-30:]: r30.update(d["numbers"])
+            for d in ds[-10:]: r10.update(d["numbers"])
+            last = ds[-1]["numbers"]; prev = ds[-2]["numbers"] if len(ds)>=2 else []; prev2 = ds[-3]["numbers"] if len(ds)>=3 else []
+            tr = build_transition_counter(ds)
+            scores = {}
+            for n in range(1, 46):
+                gap = self._get_last_seen_gap(ds, n)
+                s = allc[n]*0.8 + r300[n]*1.3 + r100[n]*1.9 + r30[n]*2.5 + r10[n]*1.6 + min(gap,25)*0.45
+                if n in last: s += 4.5
+                if n in prev and n not in last: s += 3.5
+                if n in prev2 and n not in last: s += 2.0
+                s += sum(tr[p][n] for p in last) * 0.45
+                scores[n] = s
+            return scores
+
+        def score_combo(combo, number_scores, pair_counter, history_patterns, ds):
+            combo = sorted(combo); score = sum(number_scores[n] for n in combo)
+            pair_score = sum(pair_counter.get((a,b), 0) for a,b in combinations(combo,2))
+            score += pair_score * 0.7
+            score += safe_log_count(history_patterns["band"], get_band_pattern(combo)) * 8.0
+            score += safe_log_count(history_patterns["odd_even"], get_odd_even_pattern(combo)) * 5.0
+            total = sum(combo); bucket = total//10*10
+            score += safe_log_count(history_patterns["sum_bucket"], bucket) * 5.5
+            if total < 70 or total > 220: score -= 12
+            score += safe_log_count(history_patterns["consecutive"], get_consecutive_count(combo)) * 4.0
+            score += safe_log_count(history_patterns["end_digit"], get_end_digit_pattern(combo)) * 3.5
+            last = set(ds[-1]["numbers"]); prev = set(ds[-2]["numbers"]) if len(ds)>=2 else set()
+            repeat_last = len(set(combo) & last)
+            return_prev = len((set(combo) & prev) - last)
+            if repeat_last == 1: score += 5
+            elif repeat_last == 2: score += 4
+            elif repeat_last >= 3: score -= 3
+            score += return_prev * 2.5
+            return score
+
+        candidate_pool_size = 28
+        number_scores = build_number_scores(draws)
+        pair_counter = build_pair_counter(draws)
+        history_patterns = build_history_patterns(draws)
+        ranked_numbers = sorted(range(1, 46), key=lambda x: number_scores[x], reverse=True)
+        candidate_numbers = ranked_numbers[:candidate_pool_size]
+        best = None
+        best_score = -10e12
+        for combo in combinations(candidate_numbers, 6):
+            combo = sorted(combo)
+            sc = score_combo(combo, number_scores, pair_counter, history_patterns, draws)
+            if sc > best_score:
+                best_score = sc
+                best = combo
+        if not best:
+            best = sorted(candidate_numbers[:6])
+        return apply_final_position_adjustment(best)
 
     def generate_numbers_by_mode(self, mode: str):
         latest_round = self.get_latest_round()
@@ -1666,7 +1756,7 @@ class LottoApp(QMainWindow):
             ("fortuna", "1) 포르투나 알고리즘"),
             ("cumulative", "2) 누적 보정 패턴 예측 알고리즘"),
             ("recent_pair", "3) 최근성+공출현 통합 알고리즘"),
-            ("balanced", "4) 제약 균형 알고리즘"),
+            ("balanced", "4) 유연 패턴 예측 알고리즘"),
         ]
 
         for mode_key, mode_title in mode_specs:
