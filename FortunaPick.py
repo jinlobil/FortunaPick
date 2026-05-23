@@ -891,7 +891,7 @@ class LottoApp(QMainWindow):
         picks = self._weighted_pick_unique(candidates, weights, 6)
         return sorted(picks)
 
-    def _algo_recency_gap_weighted(self, recent_window=120):
+    def _algo_recent_pair_deterministic(self, recent_window=120, candidate_top_n=18):
         recent = self.get_recent_draws(recent_window)
         recent_counter = Counter()
         last_seen = {n: None for n in range(1, 46)}
@@ -900,16 +900,6 @@ class LottoApp(QMainWindow):
                 recent_counter[n] += 1
                 if last_seen[n] is None:
                     last_seen[n] = idx
-        candidates = [n for n in range(1, 46)]
-        weights = []
-        for n in candidates:
-            hot = recent_counter.get(n, 0) + 1
-            gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
-            weights.append((hot ** 1.15) * (gap ** 0.35))
-        picks = self._weighted_pick_unique(candidates, weights, 6)
-        return sorted(picks)
-
-    def _algo_pair_correlation(self):
         co = Counter()
         for draw in self.data.values():
             nums = sorted(draw.get("numbers") or [])
@@ -918,29 +908,57 @@ class LottoApp(QMainWindow):
             for i in range(len(nums)):
                 for j in range(i + 1, len(nums)):
                     co[(nums[i], nums[j])] += 1
-        selected = []
-        candidates = set(range(1, 46))
-        while len(selected) < 6 and candidates:
-            best_n = None
-            best_score = -1
-            for n in candidates:
-                s = 0
-                for p in selected:
-                    a, b = sorted((n, p))
-                    s += co.get((a, b), 0)
-                if s > best_score:
-                    best_score = s
-                    best_n = n
-            selected.append(best_n if best_n is not None else random.choice(list(candidates)))
-            candidates.discard(selected[-1])
-        return sorted(selected)
 
-    def _algo_constraint_balanced(self, tries=5000):
-        # Balanced rejection sampler with fixed number
-        target_odd = {2, 3, 4}
-        for _ in range(tries):
-            picks = random.sample([n for n in range(1, 46)], 6)
-            nums = sorted(picks)
+        # single-number base score
+        scores = {}
+        for n in range(1, 46):
+            hot = recent_counter.get(n, 0) + 1
+            gap = (last_seen[n] if last_seen[n] is not None else recent_window) + 1
+            scores[n] = (hot * 2.6) + (gap * 0.55)
+
+        ranked = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        candidates = sorted(ranked[:candidate_top_n])
+
+        best_nums = None
+        best_tuple = None
+        for combo in combinations(candidates, 6):
+            nums = sorted(combo)
+            odd_cnt = sum(1 for n in nums if n % 2 == 1)
+            total = sum(nums)
+            consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
+            low_cnt = sum(1 for n in nums if n <= 22)
+            if odd_cnt not in [2, 3, 4]:
+                continue
+            if low_cnt not in [2, 3, 4]:
+                continue
+            if not (105 <= total <= 175):
+                continue
+            if consec_pairs > 2:
+                continue
+            single_score = sum(scores[n] for n in nums)
+            pair_score = 0
+            for i in range(6):
+                for j in range(i + 1, 6):
+                    a, b = nums[i], nums[j]
+                    pair_score += co.get((a, b), 0)
+            objective = single_score + (pair_score * 0.9) - (abs(total - 140) * 0.2)
+            ranking_key = (objective, pair_score, single_score, -abs(total - 140), tuple(-n for n in nums))
+            if best_tuple is None or ranking_key > best_tuple:
+                best_tuple = ranking_key
+                best_nums = nums
+
+        return best_nums if best_nums else sorted(candidates[:6])
+
+    def _algo_constraint_balanced(self):
+        draws = self._load_draws_for_algo()
+        if not draws:
+            return self.generate_numbers()
+        base = self._build_base_numbers(draws)
+        candidates = sorted(base["ranked_numbers"][:18])
+        best_combo = None
+        best_key = None
+        for combo in combinations(candidates, 6):
+            nums = sorted(combo)
             odd_cnt = sum(1 for n in nums if n % 2 == 1)
             total = sum(nums)
             consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
@@ -951,7 +969,7 @@ class LottoApp(QMainWindow):
                 elif 21 <= n <= 30: decade_bins[2] += 1
                 elif 31 <= n <= 40: decade_bins[3] += 1
                 else: decade_bins[4] += 1
-            if odd_cnt not in target_odd:
+            if odd_cnt not in {2, 3, 4}:
                 continue
             if not (95 <= total <= 185):
                 continue
@@ -959,8 +977,12 @@ class LottoApp(QMainWindow):
                 continue
             if max(decade_bins) > 3:
                 continue
-            return nums
-        return sorted(random.sample([n for n in range(1, 46)], 6))
+            spread = max(nums) - min(nums)
+            key = (-abs(total - 140), -consec_pairs, -max(decade_bins), spread, tuple(-n for n in nums))
+            if best_key is None or key > best_key:
+                best_key = key
+                best_combo = nums
+        return best_combo if best_combo else sorted(candidates[:6])
 
     def generate_numbers_by_mode(self, mode: str):
         latest_round = self.get_latest_round()
@@ -975,12 +997,8 @@ class LottoApp(QMainWindow):
             result = self._algo_cumulative_offset_pattern()
             self._mode_result_cache[cache_key] = result
             return result[:]
-        if mode == "recent":
-            result = self._algo_recency_gap_weighted()
-            self._mode_result_cache[cache_key] = result
-            return result[:]
-        if mode == "pair":
-            result = self._algo_pair_correlation()
+        if mode == "recent_pair":
+            result = self._algo_recent_pair_deterministic()
             self._mode_result_cache[cache_key] = result
             return result[:]
         if mode == "balanced":
@@ -1647,9 +1665,8 @@ class LottoApp(QMainWindow):
         mode_specs = [
             ("fortuna", "1) 포르투나 알고리즘"),
             ("cumulative", "2) 누적 보정 패턴 예측 알고리즘"),
-            ("recent", "3) 최근성+간격 알고리즘"),
-            ("pair", "4) 공출현 상관 알고리즘"),
-            ("balanced", "5) 제약 균형 알고리즘"),
+            ("recent_pair", "3) 최근성+공출현 통합 알고리즘"),
+            ("balanced", "4) 제약 균형 알고리즘"),
         ]
 
         for mode_key, mode_title in mode_specs:
