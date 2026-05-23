@@ -1739,6 +1739,29 @@ class LottoApp(QMainWindow):
             ball_row.addWidget(make_ball(n, size=52))
         text_label.setText("  ".join(map(str, nums)))
 
+    def _run_generator_test(self):
+        start_txt = self.test_start_input.text().strip()
+        end_txt = self.test_end_input.text().strip()
+        if not (start_txt.isdigit() and end_txt.isdigit()):
+            QMessageBox.warning(self, "입력 오류", "테스트 시작/종료 회차는 숫자로 입력해주세요.")
+            return
+        start_round = int(start_txt)
+        end_round = int(end_txt)
+        if start_round <= 0 or end_round <= 0 or start_round > end_round:
+            QMessageBox.warning(self, "입력 오류", "회차 범위를 다시 확인해주세요.")
+            return
+        original_data = self.data
+        try:
+            self.data = {k: v for k, v in original_data.items() if start_round <= int(k) <= end_round}
+            self._mode_result_cache = {}
+            if not self.data:
+                QMessageBox.information(self, "테스트 결과", "선택한 범위에 데이터가 없습니다.")
+                return
+            for mode_key, row, lbl in self.generator_card_refs:
+                self._set_mode_card_numbers(mode_key, row, lbl)
+        finally:
+            self.data = original_data
+
     # -----------------------------
     # Generator Page
     # -----------------------------
@@ -1748,23 +1771,42 @@ class LottoApp(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
+        top_row = QHBoxLayout()
         header = QLabel("번호 생성")
         header.setObjectName("SectionTitle")
-        layout.addWidget(header)
+        top_row.addWidget(header)
+        top_row.addStretch(1)
+        self.test_start_input = QLineEdit()
+        self.test_start_input.setPlaceholderText("시작 회차")
+        self.test_start_input.setFixedHeight(36)
+        self.test_start_input.setFixedWidth(100)
+        top_row.addWidget(self.test_start_input)
+        self.test_end_input = QLineEdit()
+        self.test_end_input.setPlaceholderText("종료 회차")
+        self.test_end_input.setFixedHeight(36)
+        self.test_end_input.setFixedWidth(100)
+        top_row.addWidget(self.test_end_input)
+        test_btn = QPushButton("테스트")
+        test_btn.setObjectName("PrimaryBtn")
+        test_btn.setFixedHeight(36)
+        test_btn.clicked.connect(self._run_generator_test)
+        top_row.addWidget(test_btn)
+        layout.addLayout(top_row)
 
         mode_specs = [
-            ("fortuna", "1) 포르투나 알고리즘"),
-            ("cumulative", "2) 누적 보정 패턴 예측 알고리즘"),
-            ("recent_pair", "3) 최근성+공출현 통합 알고리즘"),
-            ("balanced", "4) 유연 패턴 예측 알고리즘"),
+            ("fortuna", "1) 포르투나 알고리즘", "포르투나 픽의 기본적인 알고리즘입니다."),
+            ("cumulative", "2) 누적 보정 패턴 예측 알고리즘", "최근 회차의 보정값 패턴을 누적 분석해 다음 번호를 예측합니다."),
+            ("recent_pair", "3) 최근성+공출현 통합 알고리즘", "최근 흐름 점수와 번호쌍 공출현 점수를 함께 반영합니다."),
+            ("balanced", "4) 유연 패턴 예측 알고리즘", "패턴 점수 기반으로 조합을 평가하고 최종 자리 보정을 적용합니다."),
         ]
+        self.generator_card_refs = []
 
-        for mode_key, mode_title in mode_specs:
+        for mode_key, mode_title, desc in mode_specs:
             card, cl = make_card(min_h=150)
             title = QLabel(mode_title)
             title.setObjectName("CardTitle")
             cl.addWidget(title)
-            hint = QLabel("생성 버튼을 누르면 해당 알고리즘으로 1세트를 생성합니다.")
+            hint = QLabel(desc)
             hint.setObjectName("Muted")
             cl.addWidget(hint)
 
@@ -1776,12 +1818,8 @@ class LottoApp(QMainWindow):
             result_lbl = QLabel("-")
             result_lbl.setObjectName("Muted")
             cl.addWidget(result_lbl)
-
-            btn = QPushButton("번호 생성")
-            btn.setObjectName("PrimaryBtn")
-            btn.setFixedHeight(38)
-            btn.clicked.connect(lambda _, m=mode_key, r=row, l=result_lbl: self._set_mode_card_numbers(m, r, l))
-            cl.addWidget(btn, alignment=Qt.AlignLeft)
+            self.generator_card_refs.append((mode_key, row, result_lbl))
+            self._set_mode_card_numbers(mode_key, row, result_lbl)
             layout.addWidget(card)
 
         layout.addStretch(1)
