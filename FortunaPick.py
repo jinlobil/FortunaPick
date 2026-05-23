@@ -732,12 +732,9 @@ class LottoApp(QMainWindow):
             combo = sorted(combo)
             total = sum(combo)
             odd_count = sum(1 for x in combo if x % 2 == 1)
-            low_count = sum(1 for x in combo if x <= 22)
             if not (115 <= total <= 165):
                 continue
             if odd_count not in [2, 3, 4]:
-                continue
-            if low_count not in [2, 3, 4]:
                 continue
             combo_score = sum(scores[x] for x in combo)
             combo_score -= abs(total - 135) * 0.25
@@ -810,12 +807,9 @@ class LottoApp(QMainWindow):
             combo = sorted(combo)
             total = sum(combo)
             odd_count = sum(1 for x in combo if x % 2 == 1)
-            low_count = sum(1 for x in combo if x <= 22)
             if not (115 <= total <= 170):
                 continue
             if odd_count not in [2, 3, 4]:
-                continue
-            if low_count not in [2, 3, 4]:
                 continue
             combo_score = sum(scores[x] for x in combo)
             combo_score -= abs(total - 140) * 0.2
@@ -926,10 +920,7 @@ class LottoApp(QMainWindow):
             odd_cnt = sum(1 for n in nums if n % 2 == 1)
             total = sum(nums)
             consec_pairs = sum(1 for i in range(1, 6) if nums[i] == nums[i - 1] + 1)
-            low_cnt = sum(1 for n in nums if n <= 22)
             if odd_cnt not in [2, 3, 4]:
-                continue
-            if low_cnt not in [2, 3, 4]:
                 continue
             if not (105 <= total <= 175):
                 continue
@@ -954,16 +945,6 @@ class LottoApp(QMainWindow):
         if len(draws) < 30:
             return self.generate_numbers()
 
-        def get_band_pattern(numbers):
-            bands = [0, 0, 0, 0, 0]
-            for n in numbers:
-                if 1 <= n <= 9: bands[0] += 1
-                elif 10 <= n <= 19: bands[1] += 1
-                elif 20 <= n <= 29: bands[2] += 1
-                elif 30 <= n <= 39: bands[3] += 1
-                elif 40 <= n <= 45: bands[4] += 1
-            return tuple(bands)
-
         def get_odd_even_pattern(numbers):
             odd = sum(1 for n in numbers if n % 2 == 1)
             return (odd, 6 - odd)
@@ -987,15 +968,14 @@ class LottoApp(QMainWindow):
             return sorted(adjusted)
 
         def build_history_patterns(ds):
-            band = Counter(); oe = Counter(); sb = Counter(); cc = Counter(); ed = Counter()
+            oe = Counter(); sb = Counter(); cc = Counter(); ed = Counter()
             for d in ds:
                 nums = d["numbers"]
-                band[get_band_pattern(nums)] += 1
                 oe[get_odd_even_pattern(nums)] += 1
                 sb[(sum(nums)//10)*10] += 1
                 cc[get_consecutive_count(nums)] += 1
                 ed[get_end_digit_pattern(nums)] += 1
-            return {"band": band, "odd_even": oe, "sum_bucket": sb, "consecutive": cc, "end_digit": ed}
+            return {"odd_even": oe, "sum_bucket": sb, "consecutive": cc, "end_digit": ed}
 
         def build_pair_counter(ds):
             pc = Counter()
@@ -1040,7 +1020,6 @@ class LottoApp(QMainWindow):
             combo = sorted(combo); score = sum(number_scores[n] for n in combo)
             pair_score = sum(pair_counter.get((a,b), 0) for a,b in combinations(combo,2))
             score += pair_score * 0.7
-            score += safe_log_count(history_patterns["band"], get_band_pattern(combo)) * 8.0
             score += safe_log_count(history_patterns["odd_even"], get_odd_even_pattern(combo)) * 5.0
             total = sum(combo); bucket = total//10*10
             score += safe_log_count(history_patterns["sum_bucket"], bucket) * 5.5
