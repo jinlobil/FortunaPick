@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import random
+import hashlib
 import requests
 from collections import Counter
 from itertools import combinations
