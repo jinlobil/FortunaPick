@@ -749,6 +749,129 @@ class LottoApp(QMainWindow):
             best_combo = sorted(candidates[:6])
         return self._apply_position_offset(best_combo)
 
+    def _wrap_45(self, number):
+        while number > 45:
+            number -= 45
+        while number <= 0:
+            number += 45
+        return number
+
+    def _apply_position_offsets(self, numbers, offsets):
+        adjusted = []
+        for number, offset in zip(sorted(numbers), offsets):
+            adjusted.append(self._wrap_45(number + offset))
+        return sorted(adjusted)
+
+    def _calc_offsets(self, base_numbers, target_numbers):
+        base_numbers = sorted(base_numbers)
+        target_numbers = sorted(target_numbers)
+        offsets = []
+        for base, target in zip(base_numbers, target_numbers):
+            diff = target - base
+            if diff < 0:
+                diff += 45
+            offsets.append(diff)
+        return offsets
+
+    def _build_base_numbers(self, draws):
+        all_counter = Counter()
+        recent_300_counter = Counter()
+        recent_100_counter = Counter()
+        recent_30_counter = Counter()
+        for d in draws:
+            all_counter.update(d["numbers"])
+        for d in draws[-300:]:
+            recent_300_counter.update(d["numbers"])
+        for d in draws[-100:]:
+            recent_100_counter.update(d["numbers"])
+        for d in draws[-30:]:
+            recent_30_counter.update(d["numbers"])
+
+        scores = {}
+        for n in range(1, 46):
+            gap = self._get_last_seen_gap(draws, n)
+            score = 0
+            score += all_counter[n] * 1.0
+            score += recent_300_counter[n] * 1.8
+            score += recent_100_counter[n] * 2.5
+            score += recent_30_counter[n] * 3.0
+            score += min(gap, 25) * 0.35
+            if gap == 0:
+                score -= 3
+            elif gap == 1:
+                score -= 1.5
+            scores[n] = score
+
+        ranked_numbers = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        candidates = ranked_numbers[:15]
+        best_combo = None
+        best_score = -999999
+        for combo in combinations(candidates, 6):
+            combo = sorted(combo)
+            total = sum(combo)
+            odd_count = sum(1 for x in combo if x % 2 == 1)
+            low_count = sum(1 for x in combo if x <= 22)
+            if not (115 <= total <= 170):
+                continue
+            if odd_count not in [2, 3, 4]:
+                continue
+            if low_count not in [2, 3, 4]:
+                continue
+            combo_score = sum(scores[x] for x in combo)
+            combo_score -= abs(total - 140) * 0.2
+            if combo_score > best_score:
+                best_score = combo_score
+                best_combo = combo
+        if not best_combo:
+            best_combo = sorted(candidates[:6])
+        return {
+            "base_numbers": list(best_combo),
+            "ranked_numbers": ranked_numbers[:15]
+        }
+
+    def _build_recent_offset_profile(self, draws, lookback=5):
+        last_round = draws[-1]["round"]
+        offset_records = []
+        start_round = max(10, last_round - lookback + 1)
+        for target_round in range(start_round, last_round + 1):
+            train_draws = [d for d in draws if d["round"] < target_round]
+            target_draw = next((d for d in draws if d["round"] == target_round), None)
+            if not train_draws or target_draw is None:
+                continue
+            base_result = self._build_base_numbers(train_draws)
+            base_numbers = base_result["base_numbers"]
+            target_numbers = target_draw["numbers"]
+            offsets = self._calc_offsets(base_numbers, target_numbers)
+            offset_records.append({
+                "offsets": offsets,
+                "matched": len(set(base_numbers) & set(target_numbers))
+            })
+        return offset_records
+
+    def _weighted_average_offsets(self, offset_records):
+        if not offset_records:
+            return [0, 0, 0, 0, 0, 0]
+        weighted_sum = [0, 0, 0, 0, 0, 0]
+        total_weight = 0
+        for idx, record in enumerate(offset_records):
+            weight = idx + 1 + record["matched"] * 0.3
+            offsets = record["offsets"]
+            for i in range(6):
+                weighted_sum[i] += offsets[i] * weight
+            total_weight += weight
+        return [round(v / total_weight) for v in weighted_sum]
+
+    def _algo_cumulative_offset_pattern(self):
+        draws = self._load_draws_for_algo()
+        if len(draws) < 30:
+            return self._algo_constraint_balanced()
+        base_result = self._build_base_numbers(draws)
+        base_numbers = base_result["base_numbers"]
+        offset_records = self._build_recent_offset_profile(draws, lookback=5)
+        final_offsets = self._weighted_average_offsets(offset_records)
+        predicted_numbers = self._apply_position_offsets(base_numbers, final_offsets)
+        return predicted_numbers
+
     def _weighted_pick_unique(self, candidates, weights, k):
         pool = list(candidates)
         ws = [max(0.0001, float(w)) for w in weights]
@@ -848,8 +971,8 @@ class LottoApp(QMainWindow):
             result = self._algo_fortuna()
             self._mode_result_cache[cache_key] = result
             return result[:]
-        if mode == "freq":
-            result = self._algo_frequency_weighted()
+        if mode == "cumulative":
+            result = self._algo_cumulative_offset_pattern()
             self._mode_result_cache[cache_key] = result
             return result[:]
         if mode == "recent":
@@ -1523,7 +1646,7 @@ class LottoApp(QMainWindow):
 
         mode_specs = [
             ("fortuna", "1) 포르투나 알고리즘"),
-            ("freq", "2) 빈도 가중 알고리즘"),
+            ("cumulative", "2) 누적 보정 패턴 예측 알고리즘"),
             ("recent", "3) 최근성+간격 알고리즘"),
             ("pair", "4) 공출현 상관 알고리즘"),
             ("balanced", "5) 제약 균형 알고리즘"),
